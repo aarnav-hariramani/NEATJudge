@@ -1,0 +1,10 @@
+
+numpy
+pandas
+scikit-learn
+sentence-transformers
+neat-python
+langchain-ollama
+tqdm
+pyyaml
+openpyxl
