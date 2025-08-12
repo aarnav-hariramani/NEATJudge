@@ -25,8 +25,8 @@ selector:
 evolution:
   pop_size: 5
   generations: 3
-  micro_batches: 1
-  batch_size: 5
+  micro_batches: 3
+  batch_size: 8
   early_stop_patience: 5
 judge:
   repeats: 3
