@@ -153,6 +153,7 @@ def main():
             
         _, val_acc = mae_accuracy(preds, labs, label_range)
         print(f"[gen {g+1}] best_fitness={winner.fitness:.2f} val_acc={val_acc:.2f}")
+        # inside the generation loop, right after we compute val_acc and detect improvement
         if val_acc > best_val:
             best_val = val_acc
             no_improve = 0
@@ -164,8 +165,19 @@ def main():
             }
             from utils.io import save_pickle
             save_pickle(best_ckpt, "runs/ckpts/best.pkl")
+
+            # Print and save the prompt text so you can track evolution
+            header_text = best_ckpt["header"]
+            print("\n=== NEW BEST PROMPT (first 30 lines) ===")
+            print("\n".join(header_text.splitlines()[:30]))
+            print("=== END PROMPT ===\n")
+
+            os.makedirs("runs/prompts", exist_ok=True)
+            with open(f"runs/prompts/gen{g+1}_val{val_acc:.2f}.txt", "w", encoding="utf-8") as f:
+                f.write(header_text)
         else:
             no_improve += 1
+
         if no_improve >= cfg["evolution"]["early_stop_patience"]:
             print(f"Early stopping at gen {g+1}. Best val_acc={best_val:.2f}")
             break
