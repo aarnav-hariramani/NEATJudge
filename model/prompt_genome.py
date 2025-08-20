@@ -1,105 +1,109 @@
-# model/prompt_genome.py
-from __future__ import annotations
 import neat
 import random
 import os
-from typing import Any, Dict, Iterable, List, Tuple
-
+import re
 from .prompt import DEFAULT_HEADER
+
+# Optional mutator (safe if missing)
 try:
     from llms.mutate import mutate_prompt as _mutate
 except Exception:
-    _mutate = None  # mutation optional
+    _mutate = None
 
 
-class PromptGenomeConfig:
-    """Custom config for PromptGenome to let us read 'prompt_mutate_rate' from neat.ini."""
-    def __init__(self, config_parser):
-        section_name = self.__class__.__name__.replace("Config", "")
-        if not config_parser.has_section(section_name):
-            section_name = "DefaultGenome"
-
-        get = config_parser.get
-        getfloat = config_parser.getfloat
-
-        # how often to rewrite the rubric with the LLM (0..1)
-        try:
-            self.prompt_mutate_rate = getfloat(section_name, "prompt_mutate_rate")
-        except Exception:
-            self.prompt_mutate_rate = 0.5
-
-        # Base header to start from (env can override)
-        self.base_header = os.getenv("LLM_JUDGE_HEADER", DEFAULT_HEADER)
-
-        # LLM settings
-        self.mutate_model = get(section_name, "mutate_model", fallback=os.getenv("MUTATE_MODEL", "llama3.2:3b"))
-        self.mutate_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        try:
-            self.mutate_temperature = getfloat(section_name, "mutate_temperature")
-        except Exception:
-            self.mutate_temperature = 0.8
-
-    @staticmethod
-    def parse_config(config_parser):
-        return PromptGenomeConfig(config_parser)
+def _default_header() -> str:
+    """Allow overriding the base header via env var; otherwise use DEFAULT_HEADER."""
+    return os.getenv("LLM_JUDGE_HEADER", DEFAULT_HEADER)
 
 
-class PromptGenome(neat.genome.DefaultGenome):
-    """
-    Minimal genome that only evolves a prompt header string alongside a tiny NN (kept for NEAT bookkeeping).
-    NEAT still expects network genes; we inherit DefaultGenome so compatibility stats still work,
-    but we add `header_text` and mutate it separately.
-    """
+def _is_valid_header(text: str) -> bool:
+    """Hard validation so mutated prompts remain usable."""
+    if not text or not isinstance(text, str):
+        return False
+    t = text.strip()
+    tl = t.lower()
+    # Must include the core concepts & JSON return clause
+    must_have = ['return only json', '{"rating":', 'query', 'title']
+    if not all(s in tl for s in must_have):
+        return False
+    # Must explicitly define all 1..5 levels as "N = ..."
+    for k in ['1', '2', '3', '4', '5']:
+        if not re.search(rf'\b{k}\s*=\s*', t, flags=re.IGNORECASE):
+            return False
+    return True
 
-    def __init__(self, key):
-        super().__init__(key)
-        self.header_text: str = os.getenv("LLM_JUDGE_HEADER", DEFAULT_HEADER)
 
-    # --- Serialization (so checkpoints include the header) ---
-    def __getstate__(self):
-        state = super().__getstate__()
-        state["header_text"] = self.header_text
-        return state
+class PromptGenome(neat.DefaultGenome):
+    """Extends NEAT's DefaultGenome to carry an evolvable prompt header string."""
 
-    def __setstate__(self, state):
-        self.header_text = state.pop("header_text", os.getenv("LLM_JUDGE_HEADER", DEFAULT_HEADER))
-        super().__setstate__(state)
+    @classmethod
+    def parse_config(cls, param_dict):
+        """
+        Called by neat.Config when loading the [DefaultGenome] section.
+        We piggyback to add a custom field: prompt_mutate_rate.
+        """
+        genome_conf = super().parse_config(param_dict)
+        pmr = param_dict.get("prompt_mutate_rate", None)
+        genome_conf.prompt_mutate_rate = float(pmr) if pmr is not None else 0.0
+        return genome_conf
 
-    # --- NEAT hooks ---
-    def mutate(self, config: PromptGenomeConfig) -> None:
-        """Run standard NEAT weight/node mutations AND (probabilistically) rewrite the header with an LLM."""
-        # First do the normal genome mutation so NEAT plumbing stays valid
+    def _ensure_header(self):
+        """Guarantee presence of header_text attribute on this genome."""
+        if not hasattr(self, "header_text") or not self.header_text:
+            self.header_text = _default_header()
+
+    # --- NEAT lifecycle hooks -------------------------------------------------
+
+    def configure_new(self, genome_config):
+        """Initialize a new, random genome."""
+        super().configure_new(genome_config)
+        self._ensure_header()
+
+    def crossover(self, other, key):
+        """
+        NOTE: Signature must be (other, key) to match neat.DefaultGenome.
+        """
+        child = super().crossover(other, key)
+        # Ensure all parties have a header; child inherits internal state from parents
+        self._ensure_header()
+        other._ensure_header()
+        # child may not have header_text if parents didn't — enforce it
+        if not hasattr(child, "header_text") or not child.header_text:
+            # Inherit from one parent at random
+            child.header_text = random.choice([self.header_text, other.header_text])
+        return child
+
+    def mutate(self, config):
+        """
+        NEAT calls this with the *genome config* (not the global config).
+        Our custom rate lives on that object as 'prompt_mutate_rate'.
+        """
         super().mutate(config)
+        self._ensure_header()
 
-        # Then optionally mutate the prompt header
+        # Pull the custom mutation rate directly from the genome config
         rate = getattr(config, "prompt_mutate_rate", 0.0)
-        if rate <= 0 or _mutate is None:
-            return
-        if random.random() > rate:
+        if rate <= 0.0 or _mutate is None:
             return
 
-        try:
-            new_text = _mutate(
-                self.header_text,
-                base_url=getattr(config, "mutate_base_url", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")),
-                model=getattr(config, "mutate_model", os.getenv("MUTATE_MODEL", "llama3.2:3b")),
-                temperature=getattr(config, "mutate_temperature", 0.8),
-            )
-            ok = isinstance(new_text, str) and "Return ONLY JSON" in new_text and "rating" in new_text
-            ok = ok and ("1" in new_text and "5" in new_text)
-            if ok and new_text.strip() != self.header_text.strip():
-                print("\n--- PROMPT MUTATED ---")
-                print("OLD (first 15 lines):")
-                print("\n".join(self.header_text.splitlines()[:15]))
-                print("\nNEW (first 15 lines):")
-                print("\n".join(new_text.splitlines()[:15]))
-                print("--- END PROMPT MUTATION ---\n")
-                self.header_text = new_text
-        except Exception as e:
-            print(f"[prompt mutation failed] {e}")
+        if random.random() < rate:
+            try:
+                old = self.header_text
+                new = _mutate(old, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/"))
 
-    # neat-python calls configure_* using genome_config which is our PromptGenomeConfig
-    def configure_new(self, config: PromptGenomeConfig):
-        super().configure_new(config)
-        if not getattr(self, "header_text", None):
-            self.header_text = config.base_header
+                # Validate mutated header
+                if not _is_valid_header(new):
+                    # Rejected — keep the old header
+                    # print("[prompt mutation rejected] invalid header; keeping old.")
+                    return
+
+                if new != old:
+                    print("\n--- PROMPT MUTATED ---")
+                    print("OLD (first 15 lines):")
+                    print("\n".join(old.splitlines()[:15]))
+                    print("\nNEW (first 15 lines):")
+                    print("\n".join(new.splitlines()[:15]))
+                    print("--- END PROMPT MUTATION ---\n")
+                    self.header_text = new
+            except Exception as e:
+                print(f"[prompt mutation failed] {e}")
