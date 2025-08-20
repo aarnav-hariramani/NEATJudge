@@ -1,55 +1,42 @@
-
+# data/bank_index.py
+from __future__ import annotations
 import numpy as np
-from typing import List, Dict, Any
-from sentence_transformers import SentenceTransformer
+from dataclasses import dataclass
+from typing import List, Dict, Optional
 
-def _norm(x: np.ndarray) -> np.ndarray:
-    n = np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9
-    return x / n
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:
+    SentenceTransformer = None
+
+
+def _ensure_model(name: str):
+    if SentenceTransformer is None:
+        raise RuntimeError("sentence-transformers is required for selectors. Please install it.")
+    return SentenceTransformer(name)
+
+
+def embed_sentence_transformers(texts: List[str], model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> np.ndarray:
+    model = _ensure_model(model_name)
+    emb = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    return np.asarray(emb, dtype=np.float32)
+
+
+@dataclass
+class Bank:
+    examples: List[Dict[str, str]]  # keys: query, title, label
+
 
 class BankIndex:
-    def __init__(self, bank_rows: List[Dict[str, Any]], embed_model: str):
-        self.embedder = SentenceTransformer(embed_model)
-        self.bank_rows = bank_rows
-        texts = [f'{r["query"]} {r["response"]}' for r in bank_rows]
-        self.bank_emb = _norm(self.embedder.encode(texts, convert_to_numpy=True))
-        q_texts = [r["query"] for r in bank_rows]
-        self.bank_qemb = _norm(self.embedder.encode(q_texts, convert_to_numpy=True))
+    def __init__(self, bank: Bank, embedder: Optional[str] = None):
+        self.bank = bank
+        self.model_name = embedder or "sentence-transformers/all-MiniLM-L6-v2"
+        self.texts = [f"{ex['query']} [SEP] {ex['title']}" for ex in self.bank.examples]
+        self.emb = embed_sentence_transformers(self.texts, self.model_name)
 
-    def emb_dim(self) -> int:
-        return int(self.bank_emb.shape[1])
-
-    def encode_query(self, query: str) -> np.ndarray:
-        return _norm(self.embedder.encode([query], convert_to_numpy=True))[0]
-
-    def shortlist(self, q_emb: np.ndarray, topk: int = 128) -> np.ndarray:
-        sims = (self.bank_emb @ q_emb)
-        idx = np.argpartition(-sims, min(topk, len(sims)-1))[:topk]
-        idx = idx[np.argsort(-sims[idx])]
-        return idx
-
-    def filter_similar(self, cand_idx: np.ndarray, query_emb: np.ndarray, cap: float) -> np.ndarray:
-        """Drop candidates whose BANK QUERY is too similar to current query."""
-        sims = self.bank_qemb[cand_idx] @ query_emb
-        keep = cand_idx[sims < cap]
-        if keep.size == 0:
-            order = np.argsort(sims)
-            keep = cand_idx[order[: min(5, len(order))]]
-        return keep
-
-    def examples(self, idxs: List[int]) -> List[Dict[str, Any]]:
-        return [self.bank_rows[i] for i in idxs]
-
-    def diversity(self, idxs: List[int], bins: int = 5) -> float:
-        """Simple label-bin coverage of selected examples, scaled to 0..100."""
-        if not idxs:
-            return 0.0
-        labels = [self.bank_rows[i]["label"] for i in idxs]
-        lo, hi = min(labels), max(labels)
-        if hi == lo:
-            return 0.0
-        arr = np.array(labels)
-        cats = np.floor((arr - lo) / (hi - lo + 1e-9) * bins).astype(int)
-        cats = np.clip(cats, 0, bins-1)
-        cov = len(set(cats.tolist())) / float(bins)
-        return cov * 100.0
+    def topk(self, query: str, title: str, k: int = 6) -> List[Dict[str, str]]:
+        qtext = f"{query} [SEP] {title}"
+        qemb = embed_sentence_transformers([qtext], self.model_name)[0]
+        sims = self.emb @ qemb
+        idx = sims.argsort()[-k:][::-1]
+        return [self.bank.examples[i] for i in idx]
