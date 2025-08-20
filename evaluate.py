@@ -8,6 +8,16 @@ from model.prompt import assemble_prompt
 from model.metrics import mae_accuracy, extra_classification_metrics
 from llms.judge import Judge
 from utils.logging import tqdm_gen
+import os
+
+def _get_embed_model(cfg: dict) -> str:
+    sel = cfg.get("selector", {}) or {}
+    return (
+        sel.get("embed_model")
+        or sel.get("embedder")
+        or os.getenv("EMBED_MODEL")
+        or "sentence-transformers/all-MiniLM-L6-v2"
+    )
 
 def main():
     ap = argparse.ArgumentParser()
@@ -23,10 +33,12 @@ def main():
     ckpt = load_pickle(args.ckpt)
     genome = ckpt["genome"]
     neat_cfg = ckpt["config"]
-    header = getattr(genome, "header_text", ckpt.get("header_text", ""))
+    # Support both keys for safety
+    header = ckpt.get("header_text") or ckpt.get("header") or ""
 
+    embed_model = _get_embed_model(cfg)
     bank = splits["bank"]
-    bank_index = BankIndex(bank, cfg["selector"]["embedder"])
+    bank_index = BankIndex(bank, embed_model)
 
     judge = Judge(
         model=cfg["judge"]["model"],
@@ -45,10 +57,13 @@ def main():
         filtered_idx = bank_index.filter_similar(shortlist_idx, q_emb, cap=cfg["selector"]["sim_cap"])
         cand_emb = bank_index.bank_emb[filtered_idx]
         feats = build_features(q_emb, cand_emb)
+        _ = selector.score(feats)
+
         chosen_local = range(min(cfg["selector"]["K"], len(filtered_idx)))
         chosen_idx = [filtered_idx[i] for i in chosen_local]
         examples = bank_index.examples(chosen_idx)
-        # >>> include the candidate TITLE being rated <<<
+
+        # >>> Candidate TITLE included <<<
         prompt = assemble_prompt(header, q, row["response"], examples)
         sc = judge.score(prompt, repeats=cfg["judge"]["repeats"])
         mean_pred, stab = judge.aggregate(sc)

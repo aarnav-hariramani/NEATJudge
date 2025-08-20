@@ -15,6 +15,15 @@ from model.selector import build_features, Selector
 from model.prompt_genome import PromptGenome
 from llms.judge import Judge
 
+def _get_embed_model(cfg: dict) -> str:
+    sel = cfg.get("selector", {}) or {}
+    return (
+        sel.get("embed_model")
+        or sel.get("embedder")
+        or os.getenv("EMBED_MODEL")
+        or "sentence-transformers/all-MiniLM-L6-v2"
+    )
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default="config/default.yaml")
@@ -29,15 +38,17 @@ def main():
     bank, pool, val = splits["bank"], splits["fitness_pool"], splits["val"]
 
     # Bank index + judge
-    bank_index = BankIndex(bank, cfg["selector"]["embedder"])
+    embed_model = _get_embed_model(cfg)
+    bank_index = BankIndex(bank, embed_model)
     label_range = float(cfg["data"]["label_range"])
+
     judge = Judge(
         model=cfg["judge"]["model"],
         base_url=cfg["judge"]["base_url"],
         temperature=cfg["judge"]["temperature"]
     )
 
-    # Configure neat
+    # Configure NEAT
     neat_cfg = neat.Config(
         PromptGenome,
         neat.DefaultReproduction,
@@ -46,24 +57,19 @@ def main():
         cfg["neat_config"],
     )
 
-    # Hyperparams
     generations = int(cfg["evolution"]["generations"])
     pop = neat.Population(neat_cfg)
     pop.add_reporter(neat.StdOutReporter(False))
 
-    # Track best
     best_val = -1e9
     best_ckpt = None
     no_improve = 0
 
     def eval_genomes(genomes, config):
         nonlocal best_val, best_ckpt, no_improve
-
-        # Ensure we can get a len() for tqdm
         genomes = list(genomes)
 
         for g_idx, (gid, genome) in enumerate(tqdm_gen(genomes, desc="genomes", leave=True)):
-            # Resample per-genome so you see a fresh query bar each time
             micro = resample_microbatches(
                 pool,
                 batch_size=cfg["evolution"]["batch_size"],
@@ -71,32 +77,32 @@ def main():
                 seed=np.random.randint(0, 10_000_000),
             )
 
-            # Total queries for this genome across all micro-batches
             total_q = sum(len(b) for b in micro)
             qbar = tqdm_gen(range(total_q), desc=f"queries g{g_idx+1}", leave=False)
 
             selector = Selector(genome, config)
             header = getattr(genome, "header_text", DEFAULT_HEADER)
 
-            preds, labs, stabs = [], [], []
-            divs, length_pens = [], []
+            preds, labs, stabs, divs, length_pens = [], [], [], [], []
             progressed = 0
 
             for batch in micro:
                 for row in batch:
                     q = row["query"]
                     q_emb = bank_index.encode_query(q)
+
                     shortlist_idx = bank_index.shortlist(q_emb, cfg["selector"]["shortlist"])
                     filtered_idx = bank_index.filter_similar(shortlist_idx, q_emb, cap=cfg["selector"]["sim_cap"])
 
                     cand_emb = bank_index.bank_emb[filtered_idx]
                     feats = build_features(q_emb, cand_emb)
-                    sel_scores = selector.score(feats)
+                    _ = selector.score(feats)  # scores not directly used; kept for future weighting
+
                     chosen_local = mmr_select(cand_emb, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
                     chosen_idx = [filtered_idx[i] for i in chosen_local]
-
                     examples = bank_index.examples(chosen_idx)
-                    # >>> include the candidate TITLE being rated <<<
+
+                    # >>> Candidate TITLE included <<<
                     prompt = assemble_prompt(header, q, row["response"], examples)
 
                     if len(prompt) > cfg["selector"]["max_prompt_chars"]:
@@ -126,16 +132,13 @@ def main():
             fit  = fitness_score(acc, stab, div, lpen, cfg["fitness"])
             genome.fitness = fit
 
-            # One-line per-genome summary so you *see* it advance.
             print(f"[genome {g_idx+1}/{len(genomes)}] fit={fit:.2f} acc={acc:.2f} stab={stab:.2f} div={div:.2f} len_pen={lpen:.2f}")
-
-        # One generation step
-        return
 
     for g in tqdm_gen(range(generations), desc="generations"):
         winner = pop.run(eval_genomes, 1)
         selector = Selector(winner, neat_cfg)
         header = getattr(winner, "header_text", DEFAULT_HEADER)
+
         preds, labs = [], []
         val_subset = val[: min(len(val), cfg["evolution"]["batch_size"])]
         for row in tqdm_gen(val_subset, desc=f"val g{g+1}", leave=False):
@@ -145,11 +148,13 @@ def main():
             filtered_idx = bank_index.filter_similar(shortlist_idx, q_emb, cap=cfg["selector"]["sim_cap"])
             cand_emb = bank_index.bank_emb[filtered_idx]
             feats = build_features(q_emb, cand_emb)
-            sel_scores = selector.score(feats)
+            _ = selector.score(feats)
+
             chosen_local = mmr_select(cand_emb, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
             chosen_idx = [filtered_idx[i] for i in chosen_local]
             examples = bank_index.examples(chosen_idx)
-            # >>> include the candidate TITLE being rated <<<
+
+            # >>> Candidate TITLE included <<<
             prompt = assemble_prompt(header, q, row["response"], examples)
             sc = judge.score(prompt, repeats=cfg["judge"]["repeats"])
             mean_pred, _ = judge.aggregate(sc)
@@ -165,7 +170,8 @@ def main():
             best_ckpt = {
                 "genome": winner,
                 "config": neat_cfg,
-                "header_text": header,
+                "header": header,        # keep original key for compatibility
+                "header_text": header,   # also store under new name
                 "timestamp": time.time(),
                 "val_acc": float(val_acc),
             }
@@ -173,19 +179,18 @@ def main():
             save_pickle(best_ckpt, "runs/ckpts/best.pkl")
 
             print("\n=== NEW BEST PROMPT (first 30 lines) ===")
-            header_text = header
-            print("\n".join(header_text.splitlines()[:30]))
+            print("\n".join(header.splitlines()[:30]))
             print("=== END PROMPT ===\n")
-
             os.makedirs("runs/prompts", exist_ok=True)
             with open(f"runs/prompts/gen{g+1}_val{val_acc:.2f}.txt", "w", encoding="utf-8") as f:
-                f.write(header_text)
+                f.write(header)
         else:
             no_improve += 1
 
         if no_improve >= cfg["evolution"]["early_stop_patience"]:
             print(f"Early stopping at gen {g+1}. Best val_acc={best_val:.2f}")
             break
+
     print("Training done. Best checkpoint at runs/ckpts/best.pkl")
 
 if __name__ == "__main__":
