@@ -13,14 +13,20 @@ def _default_header():
 def _is_valid_header(text: str) -> bool:
     if not text or not isinstance(text, str):
         return False
-    t = text.lower()
-    # Must enforce JSON-only and 1..5 integer rubric (tighten as needed)
-    needs = [
-        '{"rating":',          # JSON shape hint
-        "only", "json",        # JSON-only instruction
-        "1", "2", "3", "4", "5"  # mentions the 1..5 rubric
+    t = text.strip()
+    tl = t.lower()
+    # Hard requirements:
+    must_have = [
+        'return only json', '{"rating":', 'query', 'title'
     ]
-    return all(s in t for s in needs)
+    if not all(s in tl for s in must_have):
+        return False
+    # Must define each level explicitly as '1 = ...' through '5 = ...'
+    import re
+    for k in ['1','2','3','4','5']:
+        if not re.search(rf'\b{k}\s*=\s*', t):
+            return False
+    return True
 
 class PromptGenome(neat.DefaultGenome):
     @classmethod
@@ -44,23 +50,21 @@ class PromptGenome(neat.DefaultGenome):
         # Inherit one parent's header; ensure it exists
         self._ensure_header()
         other._ensure_header()
-        child.header_text = random.choice([self.header_text, other.header_text])
+        child._ensure_header()
         return child
 
-    def mutate(self, genome_conf):
-        super().mutate(genome_conf)
+    def mutate(self, config):
+        super().mutate(config)
         self._ensure_header()
-
-        pmr = getattr(genome_conf, "prompt_mutate_rate", 0.0)
-        if pmr <= 0.0 or _mutate is None:
+        # Probabilistic prompt mutation
+        rate = getattr(config.genome_config, "prompt_mutate_rate", 0.0)
+        if rate <= 0.0:
             return
-
-        if random.random() < pmr:
+        if random.random() < rate and _mutate is not None:
             try:
-                base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/")
                 old = self.header_text
-                new = _mutate(old, base_url=base_url)
-
+                new = _mutate(old, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/"))
+                # Basic sanity checks
                 if not _is_valid_header(new):
                     # Optional: uncomment to see rejects
                     # print("[prompt mutation rejected] invalid header; keeping old.")

@@ -1,4 +1,3 @@
-
 import argparse, os, time
 import numpy as np
 import neat
@@ -15,38 +14,51 @@ from model.fitness import fitness_score
 from model.selector import build_features, Selector
 from model.prompt_genome import PromptGenome
 from llms.judge import Judge
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default="config/default.yaml")
     args = ap.parse_args()
+
     cfg = read_yaml(args.config)
     set_global_seed(cfg["data"]["seed"])
+
+    # Load data + splits
     rows = load_dataset(cfg)
     splits = make_splits(rows, cfg)
     bank, pool, val = splits["bank"], splits["fitness_pool"], splits["val"]
-    bank_index = BankIndex(bank, cfg["selector"]["embed_model"])
-    emb_dim = bank_index.emb_dim()
-    feat_dim = emb_dim * 4
 
+    # Bank index + judge
+    bank_index = BankIndex(bank, cfg["selector"]["embedder"])
+    label_range = float(cfg["data"]["label_range"])
+    judge = Judge(
+        model=cfg["judge"]["model"],
+        base_url=cfg["judge"]["base_url"],
+        temperature=cfg["judge"]["temperature"]
+    )
+
+    # Configure neat
     neat_cfg = neat.Config(
         PromptGenome,
         neat.DefaultReproduction,
         neat.DefaultSpeciesSet,
         neat.DefaultStagnation,
-        cfg["neat_config"]
+        cfg["neat_config"],
     )
-    neat_cfg.genome_config.num_inputs = feat_dim
+
+    # Hyperparams
+    generations = int(cfg["evolution"]["generations"])
     pop = neat.Population(neat_cfg)
     pop.add_reporter(neat.StdOutReporter(False))
-    pop.add_reporter(neat.StatisticsReporter())
-    judge = Judge(model=cfg["judge"]["model"],
-                  base_url=cfg["judge"]["base_url"],
-                  temperature=cfg["judge"]["temperature"])
-    label_range = float(cfg["data"]["label_range"])
+
+    # Track best
     best_val = -1e9
+    best_ckpt = None
     no_improve = 0
-    generations = int(cfg["evolution"]["generations"])
+
     def eval_genomes(genomes, config):
+        nonlocal best_val, best_ckpt, no_improve
+
         # Ensure we can get a len() for tqdm
         genomes = list(genomes)
 
@@ -79,20 +91,13 @@ def main():
 
                     cand_emb = bank_index.bank_emb[filtered_idx]
                     feats = build_features(q_emb, cand_emb)
-
-                    noise = cfg["selector"]["gumbel_noise"]
-                    if noise and noise > 0:
-                        feats = feats + (np.random.gumbel(size=feats.shape) * noise)
-
-                    scores = selector.score(feats)
-
-                    top_local = np.argsort(-scores)[: max(cfg["selector"]["K"]*3, cfg["selector"]["K"])]
-                    cands = cand_emb[top_local]
-                    chosen_local = mmr_select(cands, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
-                    chosen_idx = [filtered_idx[top_local[i]] for i in chosen_local]
+                    sel_scores = selector.score(feats)
+                    chosen_local = mmr_select(cand_emb, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
+                    chosen_idx = [filtered_idx[i] for i in chosen_local]
 
                     examples = bank_index.examples(chosen_idx)
-                    prompt = assemble_prompt(header, q, examples)
+                    # >>> include the candidate TITLE being rated <<<
+                    prompt = assemble_prompt(header, q, row["response"], examples)
 
                     if len(prompt) > cfg["selector"]["max_prompt_chars"]:
                         length_pens.append((len(prompt) - cfg["selector"]["max_prompt_chars"]) / 1000.0)
@@ -124,6 +129,8 @@ def main():
             # One-line per-genome summary so you *see* it advance.
             print(f"[genome {g_idx+1}/{len(genomes)}] fit={fit:.2f} acc={acc:.2f} stab={stab:.2f} div={div:.2f} len_pen={lpen:.2f}")
 
+        # One generation step
+        return
 
     for g in tqdm_gen(range(generations), desc="generations"):
         winner = pop.run(eval_genomes, 1)
@@ -138,37 +145,35 @@ def main():
             filtered_idx = bank_index.filter_similar(shortlist_idx, q_emb, cap=cfg["selector"]["sim_cap"])
             cand_emb = bank_index.bank_emb[filtered_idx]
             feats = build_features(q_emb, cand_emb)
-            scores = selector.score(feats)
-            top_local = np.argsort(-scores)[: max(cfg["selector"]["K"]*3, cfg["selector"]["K"])]
-            chosen_local = top_local[:cfg["selector"]["K"]]
+            sel_scores = selector.score(feats)
+            chosen_local = mmr_select(cand_emb, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
             chosen_idx = [filtered_idx[i] for i in chosen_local]
             examples = bank_index.examples(chosen_idx)
-            prompt = assemble_prompt(header, q, examples)
+            # >>> include the candidate TITLE being rated <<<
+            prompt = assemble_prompt(header, q, row["response"], examples)
             sc = judge.score(prompt, repeats=cfg["judge"]["repeats"])
             mean_pred, _ = judge.aggregate(sc)
-            if not np.isfinite(mean_pred):
-                continue
-            preds.append(float(mean_pred))
-            labs.append(float(row["label"]))
-            
+            if np.isfinite(mean_pred):
+                preds.append(float(mean_pred))
+                labs.append(float(row["label"]))
+
         _, val_acc = mae_accuracy(preds, labs, label_range)
-        print(f"[gen {g+1}] best_fitness={winner.fitness:.2f} val_acc={val_acc:.2f}")
-        # inside the generation loop, right after we compute val_acc and detect improvement
+
         if val_acc > best_val:
             best_val = val_acc
             no_improve = 0
             best_ckpt = {
                 "genome": winner,
                 "config": neat_cfg,
-                "header": getattr(winner, "header_text", DEFAULT_HEADER),
-                "val_acc": val_acc
+                "header_text": header,
+                "timestamp": time.time(),
+                "val_acc": float(val_acc),
             }
-            from utils.io import save_pickle
+            os.makedirs("runs/ckpts", exist_ok=True)
             save_pickle(best_ckpt, "runs/ckpts/best.pkl")
 
-            # Print and save the prompt text so you can track evolution
-            header_text = best_ckpt["header"]
             print("\n=== NEW BEST PROMPT (first 30 lines) ===")
+            header_text = header
             print("\n".join(header_text.splitlines()[:30]))
             print("=== END PROMPT ===\n")
 
@@ -182,5 +187,6 @@ def main():
             print(f"Early stopping at gen {g+1}. Best val_acc={best_val:.2f}")
             break
     print("Training done. Best checkpoint at runs/ckpts/best.pkl")
+
 if __name__ == "__main__":
     main()
