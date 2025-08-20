@@ -76,34 +76,31 @@ class PromptGenome(neat.DefaultGenome):
     def mutate(self, config):
         """
         NEAT calls this with the *genome config* (not the global config).
-        Our custom rate lives on that object as 'prompt_mutate_rate'.
+        We read the custom mutate rate directly off `config`, not `config.genome_config`.
         """
-        super().mutate(config)
-        self._ensure_header()
+        from llms.mutate import mutate_prompt
+        from model.prompt import repair_header
 
-        # Pull the custom mutation rate directly from the genome config
-        rate = getattr(config, "prompt_mutate_rate", 0.0)
-        if rate <= 0.0 or _mutate is None:
-            return
+        # If your neat.ini holds this in [DefaultGenome] as 'prompt_mutate_rate'
+        rate = float(getattr(config, "prompt_mutate_rate", 1.0))
 
+        # Run the base genome mutation first (weights/topology etc.), if you are using it
+        try:
+            super().mutate(config)
+        except Exception:
+            # if you're not using weights/topology, ignore
+            pass
+
+        # Mutate the prompt header with some probability
+        import random, os
         if random.random() < rate:
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            model = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
             try:
-                old = self.header_text
-                new = _mutate(old, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/"))
+                self.header = mutate_prompt(self.header, base_url=base_url, model=model, temperature=0.7)
+            except Exception:
+                # If Ollama is unavailable, keep the current header
+                pass
 
-                # Validate mutated header
-                if not _is_valid_header(new):
-                    # Rejected — keep the old header
-                    # print("[prompt mutation rejected] invalid header; keeping old.")
-                    return
-
-                if new != old:
-                    print("\n--- PROMPT MUTATED ---")
-                    print("OLD (first 15 lines):")
-                    print("\n".join(old.splitlines()[:15]))
-                    print("\nNEW (first 15 lines):")
-                    print("\n".join(new.splitlines()[:15]))
-                    print("--- END PROMPT MUTATION ---\n")
-                    self.header_text = new
-            except Exception as e:
-                print(f"[prompt mutation failed] {e}")
+            # Always sanitize/repair what we store
+            self.header = repair_header(self.header)
