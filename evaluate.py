@@ -17,7 +17,7 @@ def _get_embed_model(cfg: dict) -> str:
 
 def main():
     cfg = read_yaml("config/default.yaml")
-    _, _, test_rows = make_splits(load_dataset(cfg["data"]), cfg["data"])
+    _, _, test_rows = make_splits(load_dataset(cfg), cfg)
     bank_index = BankIndex.from_dataset(load_dataset(cfg["data"]), _get_embed_model(cfg))
     best = load_pickle("runs/ckpts/best.pkl")
     selector = Selector(best["genome"])
