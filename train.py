@@ -80,8 +80,8 @@ def evaluate_genome(genome, bank_index, train_rows, val_rows, cfg, header, judge
 
 def train(cfg):
     set_global_seed(cfg["data"]["seed"])
-    ds = load_dataset(cfg["data"])
-    train_rows, val_rows, test_rows = make_splits(ds, cfg["data"])
+    ds = load_dataset(cfg)
+    train_rows, val_rows, test_rows = make_splits(ds, cfg)
     bank_index = BankIndex.from_dataset(ds, _get_embed_model(cfg))
     judge = Judge(cfg["judge"]["model"], cfg["judge"]["base_url"], cfg["judge"]["temperature"])
     header = DEFAULT_HEADER
