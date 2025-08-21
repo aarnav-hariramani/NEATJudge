@@ -24,15 +24,15 @@ class Judge:
     @staticmethod
     def _parse(raw: str):
     # 1) Prefer strict JSON with a 'rating' key
-    try:
-        obj = json.loads(raw)
-        if isinstance(obj, dict) and "rating" in obj:
-            return float(obj["rating"])
-    except Exception:
-        pass
-    # 2) Accept 'rating: N' or 'rating = N' outside JSON
-    m = re.search(r'["\']?rating["\']?\s*[:=]\s*(\d+(\.\d+)?)', raw, flags=re.I)
-    if m:
-        return float(m.group(1))
-    # 3) Otherwise refuse to guess
-    return None
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict) and "rating" in obj:
+                return float(obj["rating"])
+        except Exception:
+            pass
+        # 2) Accept 'rating: N' or 'rating = N' outside JSON
+        m = re.search(r'["\']?rating["\']?\s*[:=]\s*(\d+(\.\d+)?)', raw, flags=re.I)
+        if m:
+            return float(m.group(1))
+        # 3) Otherwise refuse to guess
+        return None
