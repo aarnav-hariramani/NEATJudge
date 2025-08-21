@@ -1,3 +1,4 @@
+
 neat_config: "config/neat.ini"
 data:
   dataset: "ebay"
@@ -13,7 +14,6 @@ data:
   bank_frac: 0.6
   seed: 42
   label_range: 4.0
-
 selector:
   embed_model: "all-MiniLM-L6-v2"
   shortlist: 128
@@ -21,22 +21,19 @@ selector:
   mmr_lambda: 0.3
   sim_cap: 0.8
   max_prompt_chars: 6000
-  alpha: 0.5        # <-- Edit #6: blend between cosine sim and selector score
+  alpha: 0.5
   gumbel_noise: 0.1
-
 evolution:
   pop_size: 5
-  generations: 5
+  generations: 3
   micro_batches: 3
   batch_size: 8
   early_stop_patience: 5
-
 judge:
   repeats: 3
-  model: "llama3:8b"
+  model: "llama3.2:3b"
   base_url: "http://localhost:11434/"
   temperature: 0.0
-
 fitness:
   w_accuracy: 0.6
   w_stability: 0.2
