@@ -89,7 +89,7 @@ class PromptGenome(neat.DefaultGenome):
         if random.random() < rate:
             try:
                 old = self.header_text
-                new = _mutate(old, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/"))
+                new = _mutate(old)
 
                 # Validate mutated header
                 if not _is_valid_header(new):

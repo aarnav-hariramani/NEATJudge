@@ -11,6 +11,7 @@ from utils.logging import tqdm_gen
 from model.mmr import mmr_select
 import os
 
+
 def _get_embed_model(cfg: dict) -> str:
     sel = cfg.get("selector", {}) or {}
     return (

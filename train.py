@@ -96,10 +96,18 @@ def main():
 
                     cand_emb = bank_index.bank_emb[filtered_idx]
                     feats = build_features(q_emb, cand_emb)
-                    _ = selector.score(feats)  # scores not directly used; kept for future weighting
+                    sel = selector.score(feats)
+                    sims = cand_emb @ q_emb
 
-                    chosen_local = mmr_select(cand_emb, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
-                    chosen_idx = [filtered_idx[i] for i in chosen_local]
+                    alpha = float(cfg["selector"].get("alpha", 0.5))
+                    sims_n = (sims - sims.mean()) / (sims.std() + 1e-9)
+                    sel_n  = (sel  - sel.mean())  / (sel.std()  + 1e-9)
+                    comb   = alpha * sims_n + (1.0 - alpha) * sel_n
+
+                    order = np.argsort(-comb)
+                    cand_sorted = cand_emb[order]
+                    chosen_local = mmr_select(cand_sorted, q_emb, cfg["selector"]["K"], lam=cfg["selector"]["mmr_lambda"])
+                    chosen_idx = [filtered_idx[int(order[i])] for i in chosen_local]
                     examples = bank_index.examples(chosen_idx)
 
                     # >>> Candidate TITLE included <<<
