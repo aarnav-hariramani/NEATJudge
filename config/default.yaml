@@ -25,9 +25,9 @@ selector:
   gumbel_noise: 0.1
 evolution:
   pop_size: 5
-  generations: 5
+  generations: 3
   micro_batches: 6
-  batch_size: 10
+  batch_size: 6
   early_stop_patience: 5
 judge:
   repeats: 3
