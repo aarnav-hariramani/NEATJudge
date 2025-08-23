@@ -82,6 +82,10 @@ def main():
 
             selector = Selector(genome, config)
             header = getattr(genome, "header_text", DEFAULT_HEADER)
+            BASE_LEN = len(DEFAULT_HEADER)
+            _header_overhead_chars = max(0, len(header) - BASE_LEN)
+            print(f"[header len={len(header)} overhead={_header_overhead_chars}]")
+
 
             preds, labs, stabs, divs, length_pens = [], [], [], [], []
             progressed = 0
@@ -112,9 +116,8 @@ def main():
 
                     # >>> Candidate TITLE included <<<
                     prompt = assemble_prompt(header, q, row["response"], examples)
-
-                    if len(prompt) > cfg["selector"]["max_prompt_chars"]:
-                        length_pens.append((len(prompt) - cfg["selector"]["max_prompt_chars"]) / 1000.0)
+                    
+                    length_pens.append(_header_overhead_chars / 200.0)
 
                     scores = judge.score(prompt, repeats=cfg["judge"]["repeats"])
                     mean_pred, stab = judge.aggregate(scores)

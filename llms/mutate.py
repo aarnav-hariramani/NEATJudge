@@ -18,6 +18,9 @@ import re
 import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
+import re
+_JSON_LINE_RE = re.compile(r'(?mi)^\s*Return\s+ONLY\s+JSON:\s*\{"rating":\s*N\}.*$')
+
 # Where we *optionally* pull counterexamples from (written by your training loop if available).
 _DEFAULT_MISTAKES_PATH = os.path.join("runs", "last_mistakes.jsonl")
 
@@ -201,6 +204,12 @@ def _format_fewshot(examples: List[Dict[str, Any]], rng: random.Random) -> str:
         lines.append(shot)
     return "\n\n".join(lines)
 
+def _split_at_json_line(text: str):
+    m = _JSON_LINE_RE.search(text or "")
+    if not m:
+        return text.strip(), ''
+    return text[:m.start()].rstrip(), text[m.start():].strip()
+
 def mutate_prompt(
     base_prompt: str,
     examples: Optional[List[Dict[str, Any]]] = None,
@@ -210,73 +219,33 @@ def mutate_prompt(
     seed: Optional[int] = None
 ) -> str:
     """
-    Deterministic, counterexample-driven mutation.
-    - Keeps the original rubric verbatim.
-    - Appends concise calibration rules that alter decision caps.
-    - Adds a small few-shot block with JSON-only answers.
-    - If no mistakes are available, uses generic rules + synthetic examples.
-
-    This signature is backward-compatible with prior callers that only pass (base_prompt).
+    Mutate by inserting a compact calibration block *before* the strict JSON line.
+    Do NOT append anything after the JSON line to preserve parsing discipline.
+    Signature remains backward-compatible with existing callers.
     """
-    rng = random.Random(seed)
+    pre, json_line = _split_at_json_line(base_prompt)
+    if not json_line:
+        json_line = 'Return ONLY JSON: {"rating": N} where N is an INTEGER in [1,2,3,4,5].'
 
-    # Pull mistakes if not explicitly provided
-    mistakes = list(examples) if examples is not None else _read_mistakes(mistakes_path)
+    # Keep it short to limit length penalty — two to three high-precision caps
+    rules = [
+        "Calibration rules (apply before scoring):",
+        "- If QUERY specifies a brand/model that is missing in TITLE, cap rating at 2.",
+        "- If TITLE violates an explicit constraint in QUERY (e.g., size, device fit, or “not for X”), rate 1."
+    ]
+    cal_block = "---\n" + "\n".join(rules) + "\n---"
 
-    # Choose few-shot examples
-    few = _pick_fewshot(mistakes, k=max(3, min(num_fewshot, 5)), rng=rng)
-    rules = _build_rules_from_mistakes(mistakes)
+    # Reassemble with JSON line as the final header instruction
+    new_prompt = (pre + "\n\n" + cal_block + "\n\n" + json_line).strip() + "\n"
 
-    # If we still have no few-shot (no mistakes file etc.), synthesize a couple safe generic shots
-    if not few:
-        synth = [
-            {
-                "query": "iphone 14 pro max case black magsafe",
-                "title": "Universal phone case with stand (fits many models), color: Black",
-                "label": 3
-            },
-            {
-                "query": "samsung galaxy s23 screen protector 3 pack",
-                "title": "Samsung Galaxy S23 Tempered Glass Screen Protector (3-Pack) – Anti-scratch",
-                "label": 5
-            },
-            {
-                "query": "pixel 7 charger 30w",
-                "title": "USB-C wall charger 20W, fast charge for iPhone",
-                "label": 2
-            },
-            {
-                "query": "airpods pro 2 ear tips large",
-                "title": "Replacement ear tips for AirPods Pro 2 (Large, 2 pairs)",
-                "label": 5
-            }
-        ]
-        few = synth[:max(3, min(num_fewshot, 5))]
-
-    fewshot_block = _format_fewshot(few, rng=rng)
-
-    # Build the mutated prompt by *appending* a minimal, behavior-changing tail.
-    tail = textwrap.dedent(f"""
-    ---
-    Calibration rules (apply strictly before scoring):
-    {os.linesep.join(rules)}
-
-    When unsure, do not guess 5; prefer 4 or lower unless all hard constraints are clearly met.
-
-    Examples (follow exactly; output JSON only):
-    {fewshot_block}
-    """)
-
-    new_prompt = base_prompt.rstrip() + "\n\n" + tail.strip() + "\n"
-
-    # Logging: keep the same shape your loop expects.
-    old_head = "\n".join(base_prompt.strip().splitlines()[:15])
+    # Familiar mutation log format (first 15 lines preview)
+    old_head = "\n".join((base_prompt or "").strip().splitlines()[:15])
     new_head = "\n".join(new_prompt.strip().splitlines()[:15])
     print("\n--- PROMPT MUTATED ---")
     print("OLD (first 15 lines):")
     print(old_head)
     print("\nNEW (first 15 lines):")
     print(new_head)
-    print("\n--- END PROMPT MUTATION ---\n")
+    print("--- END PROMPT MUTATION ---\n")
 
     return new_prompt
