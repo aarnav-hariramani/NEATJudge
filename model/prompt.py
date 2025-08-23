@@ -135,44 +135,42 @@ def _format_few_shots(few_shots: Any) -> str:
 
 def assemble_prompt(
     header: str,
-    few_shots: Optional[Any] = None,
-    tail: Optional[str] = None,
+    a: Optional[Any] = None,
+    b: Optional[Any] = None,
+    c: Optional[Any] = None,
 ) -> str:
     """
-    Backward-compatible prompt assembler.
+    Compatibility:
+      1) assemble_prompt(header, query, title, examples)    # repo's current usage
+      2) assemble_prompt(header, few_shots=None, tail=None) # other sites
 
-    Common existing call patterns this supports:
-      - assemble_prompt(header)
-      - assemble_prompt(header, few_shots)
-      - assemble_prompt(header, few_shots, tail)
-
-    Behavior:
-      1) Starts with header (as-is).
-      2) If few_shots provided, appends normalized examples.
-      3) If tail provided, appends tail verbatim (e.g., final IO instruction).
-
-    Returns a single string; no change to downstream usage.
+    Returns a single prompt string.
     """
     parts: List[str] = []
     if header:
         parts.append(header.strip())
 
+    # Case 1: four-arg style -> (header, query, title, examples)
+    if isinstance(a, str) and isinstance(b, str):
+        query, title, examples = a, b, c
+
+        ex_block = _format_few_shots(examples)
+        if ex_block:
+            parts.append(ex_block)
+
+        # The instance to be judged — match your existing IO format
+        parts.append(f"QUERY: {query}\nTITLE: {title}\nOUTPUT:")
+        return ("\n\n".join(parts)).rstrip() + "\n"
+
+    # Case 2: (header, few_shots=None, tail=None)
+    few_shots, tail = a, b
     ex_block = _format_few_shots(few_shots)
     if ex_block:
         parts.append(ex_block)
-
     if tail:
-        parts.append(tail.strip())
+        parts.append(str(tail).strip())
 
-    prompt = "\n\n".join([p for p in parts if p]).strip()
-
-    # Safety: ensure the OUTPUT JSON rule remains visible if header had it.
-    # (Does not add new policy; just preserves if user header had it.)
-    if re.search(r'{"\s*rating\s*"\s*:', prompt, flags=re.I) is None:
-        # If header didn’t contain it, we don’t force it.
-        pass
-
-    return prompt
+    return ("\n\n".join([p for p in parts if p])).rstrip() + "\n"
 
 
 __all__ = ["DEFAULT_HEADER", "assemble_prompt"]
