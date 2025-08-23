@@ -59,19 +59,31 @@ class PromptGenome(neat.DefaultGenome):
         super().configure_new(genome_config)
         self._ensure_header()
 
+    # in class PromptGenome
     def crossover(self, other, key):
-        """
-        NOTE: Signature must be (other, key) to match neat.DefaultGenome.
-        """
-        child = super().crossover(other, key)
-        # Ensure all parties have a header; child inherits internal state from parents
-        self._ensure_header()
-        other._ensure_header()
-        # child may not have header_text if parents didn't — enforce it
-        if not hasattr(child, "header_text") or not child.header_text:
-            # Inherit from one parent at random
-            child.header_text = random.choice([self.header_text, other.header_text])
-        return child
+            """
+            NOTE: Signature must be (other, key) to match neat.DefaultGenome.
+            """
+            child = super().crossover(other, key)
+
+            # Ensure all parties have a header; child inherits internal state from parents
+            self._ensure_header()
+            other._ensure_header()
+
+            # child may not have header_text if parents didn't — enforce it
+            if not hasattr(child, "header_text") or not child.header_text:
+                # Prefer header from the fitter parent to avoid losing good mutated prompts
+                f_self  = getattr(self,  "fitness", None)
+                f_other = getattr(other, "fitness", None)
+                if isinstance(f_self, (int, float)) and isinstance(f_other, (int, float)):
+                    child.header_text = self.header_text if f_self >= f_other else other.header_text
+                else:
+                    # Fallback to the old behavior if fitness is missing
+                    child.header_text = random.choice([self.header_text, other.header_text])
+
+            return child
+
+
 
     def mutate(self, config):
         """
