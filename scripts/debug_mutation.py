@@ -3,6 +3,11 @@ from __future__ import annotations
 import argparse, os, random, json
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+
+import os, sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.io import read_yaml
 from utils.io import read_yaml
 from data.loaders import load_dataset
 from data.splits import make_splits
