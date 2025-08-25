@@ -175,8 +175,7 @@ _MUT_OPS = [
     _op_rewrite_role,
     _op_rewrite_ties,
     _op_harden_output,
-    _op_summarize_extra,
-    _op_delete_random_rule,
+    _op_summarize_extra
 ]
 
 # ---------- public API ----------
