@@ -14,7 +14,32 @@ try:
 except Exception:
     ChatOllama = None
 
-# ---------- config helpers ----------
+import re
+
+_SEC_ROLE = re.compile(r"(?s)### ROLE.*?(?=### SCALE)")
+_SEC_SCALE = re.compile(r"(?s)### SCALE.*?(?=### TIEBREAKERS)")
+_SEC_TB   = re.compile(r"(?s)### TIEBREAKERS.*?(?=### OUTPUT)")
+_SEC_OUT  = re.compile(r"(?s)### OUTPUT.*\Z")
+
+def _part(rx, text, fallback=""):
+    m = rx.search(text)
+    return (m.group(0).strip() if m else fallback).strip()
+
+def mix_prompts(p1: str, p2: str) -> str:
+    """ROLE from p1, TIEBREAKERS from p2, preserve SCALE + OUTPUT from p1 (canonical)."""
+    role = _part(_SEC_ROLE, p1) or _part(_SEC_ROLE, p2)
+    scale = _part(_SEC_SCALE, p1)  # keep p1 SCALE
+    tb = _part(_SEC_TB, p2) or _part(_SEC_TB, p1)
+    out = _part(_SEC_OUT, p1)      # keep p1 OUTPUT
+    combo = "\n\n".join([role, scale, tb, out]).strip() + "\n"
+
+    # quick invariant
+    low = combo.lower()
+    if not all((f"{k} =" in low or f"{k}=" in low) for k in "12345"):  # require "N ="
+        return p1
+    if "rating" not in low:
+        return p1
+    return combo
 
 def _load_cfg() -> dict:
     cfg_path = os.getenv("LLM_JUDGE_CONFIG", "config/default.yaml")
@@ -178,21 +203,24 @@ _MUT_OPS = [
     _op_summarize_extra
 ]
 
-# ---------- public API ----------
-
 def mutate_prompt(base_prompt: str) -> str:
     pieces = _split(base_prompt)
     before = _render(pieces)
 
-    # pick 1–2 local ops
-    ops = random.sample(_MUT_OPS, k=min(2, len(_MUT_OPS)))
-    for op in ops:
-        try:
-            op(pieces)
-        except Exception:
-            pass
+    for _ in range(3):  # try up to 3 times to get a real edit
+        tmp = dict(pieces)
+        for op in random.sample(_MUT_OPS, k=min(2, len(_MUT_OPS))):
+            try:
+                op(tmp)
+            except Exception:
+                pass
+        after = _render(tmp)
+        if after.strip() != before.strip():
+            pieces = tmp
+            break
 
-    after = _render(pieces)
+    return _render(pieces)
+
 
     # guardrails
     if "rating" not in after.lower():      # must preserve JSON instruction
