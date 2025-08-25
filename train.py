@@ -15,6 +15,13 @@ from model.selector import build_features, Selector
 from model.prompt_genome import PromptGenome
 from llms.judge import Judge
 
+from llms.mutate import mix_prompts
+import random
+
+HEADER_BANK = []               # list of (fitness, header_text)
+BANK_SIZE = 20
+BANK_INJECT_P = 0.20
+
 def _get_embed_model(cfg: dict) -> str:
     sel = cfg.get("selector", {}) or {}
     return (
@@ -67,9 +74,20 @@ def main():
 
     def eval_genomes(genomes, config):
         nonlocal best_val, best_ckpt, no_improve
+        global HEADER_BANK
         genomes = list(genomes)
 
+        gen_records = []  # collect (fitness, header_text) for this generation
+
         for g_idx, (gid, genome) in enumerate(tqdm_gen(genomes, desc="genomes", leave=True)):
+            # --- Step 2A: probabilistic recombination with bank BEFORE scoring ---
+            if HEADER_BANK and random.random() < BANK_INJECT_P:
+                # pick a donor header from the bank
+                _, donor_header = random.choice(HEADER_BANK)
+                # mix current genome's header with donor (ROLE/TIEBREAKERS mix; SCALE/OUTPUT preserved)
+                mixed = mix_prompts(getattr(genome, "header_text", DEFAULT_HEADER), donor_header)
+                genome.header_text = mixed
+
             micro = resample_microbatches(
                 pool,
                 batch_size=cfg["evolution"]["batch_size"],
@@ -85,7 +103,6 @@ def main():
             BASE_LEN = len(DEFAULT_HEADER)
             _header_overhead_chars = max(0, len(header) - BASE_LEN)
             print(f"[header len={len(header)} overhead={_header_overhead_chars}]")
-
 
             preds, labs, stabs, divs, length_pens = [], [], [], [], []
             progressed = 0
@@ -116,7 +133,7 @@ def main():
 
                     # >>> Candidate TITLE included <<<
                     prompt = assemble_prompt(header, q, row["response"], examples)
-                    
+
                     length_pens.append(_header_overhead_chars / 200.0)
 
                     scores = judge.score(prompt, repeats=cfg["judge"]["repeats"])
@@ -134,6 +151,8 @@ def main():
 
             if not preds:
                 genome.fitness = -1e9
+                # still record header (with very low fitness) so we can keep bank non-empty
+                gen_records.append((-1e9, getattr(genome, "header_text", DEFAULT_HEADER)))
                 continue
 
             _, acc = mae_accuracy(preds, labs, label_range)
@@ -144,6 +163,19 @@ def main():
             genome.fitness = fit
 
             print(f"[genome {g_idx+1}/{len(genomes)}] fit={fit:.2f} acc={acc:.2f} stab={stab:.2f} div={div:.2f} len_pen={lpen:.2f}")
+
+            # --- collect for the bank update ---
+            gen_records.append((genome.fitness, getattr(genome, "header_text", DEFAULT_HEADER)))
+
+        # --- Step 2B: update HEADER_BANK with this generation’s best headers ---
+        merged = {}
+        for f, h in HEADER_BANK + gen_records:
+            key = (h or "").strip()
+            if not key:
+                continue
+            if key not in merged or f > merged[key]:
+                merged[key] = f
+        HEADER_BANK[:] = sorted(((f, h) for h, f in merged.items()), key=lambda x: x[0], reverse=True)[:BANK_SIZE]
 
     for g in tqdm_gen(range(generations), desc="generations"):
         winner = pop.run(eval_genomes, 1)

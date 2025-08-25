@@ -8,4 +8,3 @@ langchain-ollama
 tqdm
 pyyaml
 openpyxl
-utils
