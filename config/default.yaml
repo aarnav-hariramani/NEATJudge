@@ -30,7 +30,7 @@ evolution:
   batch_size: 6
   early_stop_patience: 5
 judge:
-  repeats: 3
+  repeats: 1
   model: "llama3.2:3b"
   base_url: "http://localhost:11434/"
   temperature: 0.0
