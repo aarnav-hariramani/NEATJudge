@@ -16,15 +16,44 @@ from model.metrics import mae_accuracy
 from model.prompt_genome import _is_valid_header
 from llms.judge import Judge
 
+import numpy as np
+from data.bank_index import BankIndex
+from model.mmr import mmr_select
+
+
 try:
     from llms.mutate import mutate_prompt
 except Exception:
     mutate_prompt = None
 
-def _eval_header(header, rows, judge, repeats, label_range):
+def _eval_header(header, rows, judge, repeats, label_range, cfg, bank_index):
     preds, labs = [], []
     for r in rows:
-        prompt = assemble_prompt(header, r["query"], r["response"], None)
+        q = r["query"]
+        q_emb = bank_index.encode_query(q)
+        shortlist_idx = bank_index.shortlist(q_emb, cfg["selector"]["shortlist"])
+        filtered_idx = bank_index.filter_similar(shortlist_idx, q_emb, cap=cfg["selector"]["sim_cap"])
+
+        cand_emb = bank_index.bank_emb[filtered_idx]
+        sims = cand_emb @ q_emb
+        order = np.argsort(-sims)
+
+        # same K and MMR lambda as training
+        K = cfg["selector"]["K"]
+        lam = cfg["selector"].get("mmr_lambda", cfg["selector"].get("alpha", 0.5))
+        chosen_local = mmr_select(cand_emb[order], q_emb, K, lam=lam)
+        chosen_idx = [filtered_idx[int(order[i])] for i in chosen_local]
+        examples = bank_index.examples(chosen_idx)
+
+        # Enforce the same prompt-length budget as training by backing off example count if needed
+        max_chars = int(cfg["selector"].get("max_prompt_chars", 6000))
+        ex = list(examples)
+        while True:
+            prompt = assemble_prompt(header, r["query"], r["response"], ex)
+            if len(prompt) <= max_chars or len(ex) == 0:
+                break
+            ex = ex[:-1]  # drop one example and re-check
+
         scores = judge.score(prompt, repeats=repeats)  # list[float]
         if scores:
             preds.append(sum(scores)/len(scores))
@@ -47,7 +76,10 @@ def main():
     random.seed(args.seed)
 
     rows = load_dataset(cfg)
-    splits = make_splits(rows, cfg)
+    splits = make_splits(load_dataset(cfg), cfg)
+    bank_rows = splits["bank"]
+    bank_index = BankIndex(bank_rows, cfg["selector"]["embed_model"])
+
     val = splits["val"][:]
     random.shuffle(val)
     slice_rows = val[:args.val_size]
@@ -57,7 +89,13 @@ def main():
 
     header = Path(args.start_header).read_text(encoding="utf-8") if args.start_header and Path(args.start_header).exists() else DEFAULT_HEADER
 
-    cur_mae, cur_acc, cur_len = _eval_header(header, slice_rows, judge, repeats=args.repeats, label_range=cfg["data"]["label_range"])
+    cur_mae, cur_acc, cur_len = _eval_header(
+        header, slice_rows, judge,
+        repeats=args.repeats,
+        label_range=cfg["data"]["label_range"],
+        cfg=cfg,
+        bank_index=bank_index
+    )
     print(f"[BASELINE] acc={cur_acc:.2f} mae={cur_mae:.2f} words={cur_len}")
 
     out_dir = REPO_ROOT / "runs" / "mutation_debug"
@@ -84,7 +122,13 @@ def main():
             accepted = False
             delta = float("nan")
         else:
-            new_mae, new_acc, new_len = _eval_header(candidate, slice_rows, judge, repeats=args.repeats, label_range=cfg["data"]["label_range"])
+            new_mae, new_acc, new_len = _eval_header(
+                candidate, slice_rows, judge,
+                repeats=args.repeats,
+                label_range=cfg["data"]["label_range"],
+                cfg=cfg,
+                bank_index=bank_index
+            )
             delta = new_acc - cur_acc
             # simple acceptance: require margin and anti-bloat
             accepted = (delta >= args.accept_margin) and (new_len <= int(cur_len * 1.25))

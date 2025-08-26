@@ -20,7 +20,7 @@ import random
 
 HEADER_BANK = []               # list of (fitness, header_text)
 BANK_SIZE = 20
-BANK_INJECT_P = 0.20
+BANK_INJECT_P = 0.05
 
 def _get_embed_model(cfg: dict) -> str:
     sel = cfg.get("selector", {}) or {}
@@ -131,8 +131,13 @@ def main():
                     chosen_idx = [filtered_idx[int(order[i])] for i in chosen_local]
                     examples = bank_index.examples(chosen_idx)
 
-                    # >>> Candidate TITLE included <<<
-                    prompt = assemble_prompt(header, q, row["response"], examples)
+                    max_chars = int(cfg["selector"].get("max_prompt_chars", 6000))
+                    ex = list(examples)
+                    while True:
+                        prompt = assemble_prompt(header, q, row["response"], ex)
+                        if len(prompt) <= max_chars or len(ex) == 0:
+                            break
+                        ex = ex[:-1]  # drop one example and re-check
 
                     length_pens.append(_header_overhead_chars / 200.0)
 
