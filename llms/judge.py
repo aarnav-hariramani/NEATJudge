@@ -2,14 +2,36 @@
 import json, re, numpy as np
 from typing import List, Tuple
 from langchain_ollama import ChatOllama
+
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeoutError
+
+
 _num_re = re.compile(r'(-?\d+(\.\d+)?)')
 class Judge:
     def __init__(self, model: str, base_url: str, temperature: float = 0.0):
         self.llm = ChatOllama(model=model, base_url=base_url, temperature=temperature)
-    def score(self, prompt: str, repeats: int) -> List[float]:
+
+    def _invoke_with_timeout(self, prompt: str, timeout_s: float):
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(self.llm.invoke, prompt)
+            try:
+                res = fut.result(timeout=timeout_s)
+                return res.content.strip()
+            except FTimeoutError:
+                return None
+            except Exception:
+                return None
+            
+    def score(self, prompt: str, repeats: int, timeout_s: float = 12.0, retries: int = 1) -> list[float]:
         out = []
         for _ in range(repeats):
-            raw = self.llm.invoke(prompt).content.strip()
+            raw = None
+            for _try in range(retries + 1):
+                raw = self._invoke_with_timeout(prompt, timeout_s)
+                if raw:
+                    break
+            if not raw:
+                continue
             val = self._parse(raw)
             if val is not None:
                 out.append(val)
