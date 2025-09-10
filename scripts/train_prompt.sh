@@ -1,7 +1,7 @@
 
 #!/usr/bin/env bash
 set -euo pipefail
-python - <<'PY'
+python3 - <<'PY'
 from neatjudge.utils.io import load_yaml
 from neatjudge.evolution.train_prompt import train_prompt
 cfg = load_yaml('config/default.yaml')
