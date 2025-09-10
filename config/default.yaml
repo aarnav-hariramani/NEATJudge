@@ -1,41 +1,25 @@
 
 neat_config: "config/neat.ini"
 data:
-  dataset: "ebay"
-  paths:
-    ebay: "data/sources/ebay_data.xlsx"
-    truthfulqa: "data/sources/truthfulqa.json"
-  columns:
-    history: "readable_history"
-    product: "title"
-    label: "relevance_score"
+  dataset: "truthfulqa"
   val_frac: 0.1
   test_frac: 0.1
   bank_frac: 0.6
   seed: 42
-  label_range: 4.0
 selector:
-  embed_model: "all-MiniLM-L6-v2"
-  shortlist: 128
-  K: 8
-  mmr_lambda: 0.3
-  sim_cap: 0.8
-  max_prompt_chars: 6000
+  embedding: "sentence-transformers/all-MiniLM-L6-v2"
+  shortlist: 64
+  sim_cap: 32
+  K: 6
   alpha: 0.5
-  gumbel_noise: 0.1
+  mmr_lambda: 0.3
 evolution:
-  pop_size: 5
-  generations: 3
+  generations: 5
   micro_batches: 6
-  batch_size: 6
+  batch_size: 8
   early_stop_patience: 5
 judge:
-  repeats: 1
+  repeats: 2
   model: "llama3.2:3b"
   base_url: "http://localhost:11434/"
   temperature: 0.0
-fitness:
-  w_accuracy: 0.8
-  w_stability: 0
-  w_diversity: 0.1
-  w_length_penalty: 0.1
