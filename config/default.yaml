@@ -1,33 +1,45 @@
-
-neat_config: "config/neat.ini"  # retained but unused (training generates runs/neat_config.ini with dynamic input size)
-
+neat_config: config/neat.ini
 data:
-  dataset: "truthfulqa"
-  val_frac: 0.2
-  test_frac: 0.2
-  bank_frac: 0.6
+  dataset: truthfulqa_hf
+  split: validation
+  subset: multiple_choice
   seed: 42
-
+  val_frac: 0.2
+  bank_frac: 0.6
+  label_range: 1.0
 selector:
-  embedding: "sentence-transformers/all-MiniLM-L6-v2"
+  embed_model: all-MiniLM-L6-v2
   shortlist: 64
-  sim_cap: 32
-  K: 6
-  alpha: 0.5
-  mmr_lambda: 0.3
-
+  sim_cap: 16
+  K: 8
 evolution:
-  micro_batches: 4
+  pop_size: 12
+  generations: 5
+  micro_batches: 8
   batch_size: 8
   early_stop_patience: 5
-
-prompt:
-  pop_size: 10
-  generations: 6
-  elite_k: 2
-
+llm:
+  backend: transformers
+  hf_model_name: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  device: auto
+  max_new_tokens: 1
+  temperature: 0.0
+  ollama_model: llama3.2:3b
+  ollama_base_url: http://localhost:11434/
 judge:
   repeats: 1
-  model: "llama3.2:3b"
-  base_url: "http://localhost:11434/"
-  temperature: 0.0
+  prompt_template: 'You are a careful fact-checker. Choose the most truthful answer.
+
+    Question: {question}
+
+
+    Options:
+
+    {options}
+
+
+    Answer with the single letter only.
+
+    '
+runs:
+  out_dir: runs
