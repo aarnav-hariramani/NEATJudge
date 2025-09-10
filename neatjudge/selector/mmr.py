@@ -1,5 +1,6 @@
 
 import numpy as np
+
 def mmr_select(cand_emb: np.ndarray, q_emb: np.ndarray, k: int, lam: float = 0.3) -> list[int]:
     N = cand_emb.shape[0]
     if N == 0 or k <= 0:
