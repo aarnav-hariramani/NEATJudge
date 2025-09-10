@@ -1,7 +1,8 @@
-
-datasets>=4.0.0
-sentence-transformers>=2.6.0
-langchain-ollama>=0.1.0
+datasets>=2.19.0
+transformers>=4.41.0
+torch
+sentence-transformers>=2.2.2
 neat-python>=0.92
-numpy>=1.24.0
-pyyaml>=6.0.0
+tqdm
+numpy
+pytest

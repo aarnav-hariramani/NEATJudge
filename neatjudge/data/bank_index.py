@@ -1,43 +1,43 @@
-
-from typing import List, Dict, Any, Sequence
 import numpy as np
-try:
-    from sentence_transformers import SentenceTransformer
-except Exception:
-    SentenceTransformer = None  # type: ignore
+from typing import List
+from sentence_transformers import SentenceTransformer
+from .loaders import QAExample
+
+def _norm(x: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9
+    return x / n
 
 class BankIndex:
-    def __init__(self, bank_rows: List[Dict[str, Any]], embed_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(self, bank_rows: List[QAExample], embed_model: str):
+        self.embedder = SentenceTransformer(embed_model)
         self.bank_rows = bank_rows
-        self.embed_model_name = embed_model
-        self.model = SentenceTransformer(embed_model) if SentenceTransformer else None
-        texts = [f"Q: {r['question']}\nA: {r.get('choice','')}" for r in bank_rows]
-        self.bank_emb = self._encode(texts)
-        self.bank_texts = texts
-
-    def _encode(self, texts: Sequence[str]) -> np.ndarray:
-        if self.model is None:
-            rng = np.random.RandomState(0)
-            return rng.randn(len(texts), 384).astype("float32")
-        embs = self.model.encode(list(texts), convert_to_numpy=True, show_progress_bar=False)
-        norms = np.linalg.norm(embs, axis=1, keepdims=True) + 1e-9
-        return (embs / norms).astype("float32")
-
-    def embed_dim(self) -> int:
-        return int(self.bank_emb.shape[1])
-
+        texts = [ex.question for ex in bank_rows]
+        self.bank_emb = _norm(self.embedder.encode(texts, convert_to_numpy=True))
     def encode_query(self, q: str) -> np.ndarray:
-        return self._encode([q])[0]
-
-    def shortlist(self, q_emb: np.ndarray, top_k: int = 64) -> List[int]:
-        sims = self.bank_emb @ q_emb
-        order = np.argsort(-sims)[:top_k]
-        return [int(i) for i in order]
-
-    def filter_similar(self, idxs: List[int], q_emb: np.ndarray, cap: int = 32) -> List[int]:
-        sims = self.bank_emb[idxs] @ q_emb
-        order = np.argsort(-sims)[:cap]
-        return [idxs[int(i)] for i in order]
-
-    def examples(self, idxs: List[int]) -> List[str]:
-        return [self.bank_texts[i] for i in idxs]
+        return _norm(self.embedder.encode([q], convert_to_numpy=True))[0]
+    def shortlist(self, q_emb: np.ndarray, k: int) -> np.ndarray:
+        sims = (self.bank_emb @ q_emb)
+        idx = np.argsort(-sims)[:k]
+        return idx
+    def filter_similar(self, idxs: np.ndarray, q_emb: np.ndarray, cap: int) -> List[int]:
+        if len(idxs) <= cap:
+            return idxs.tolist()
+        chosen = []
+        for i in idxs:
+            if not chosen:
+                chosen.append(int(i)); 
+                if len(chosen)>=cap: break
+                continue
+            # penalize redundancy by cosine sim to chosen
+            S = np.array(chosen, dtype=int)
+            red = np.max(self.bank_emb[i] @ self.bank_emb[S].T)
+            if red < 0.95:  # keep diversity
+                chosen.append(int(i))
+                if len(chosen)>=cap: break
+        # fallback fill
+        j = 0
+        while len(chosen) < min(cap, len(idxs)):
+            i = int(idxs[j]); j+=1
+            if i not in chosen:
+                chosen.append(i)
+        return chosen
