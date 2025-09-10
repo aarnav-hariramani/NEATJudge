@@ -19,7 +19,7 @@ class PromptGenome:
         fewshot = "\n\n".join(examples[:k]) if k > 0 else ""
         ex_hdr = "EXAMPLES (may help you recall factual context):\n" if self.include_explanandum and fewshot else ""
         guard = "\nYou must answer with a single JSON line only." if self.json_guard else ""
-        return f"""{'{'}self.header.strip(){'}'}{guard}
+        return f"""{self.header.strip()}{guard}
 
 {ex_hdr}{fewshot}
 
