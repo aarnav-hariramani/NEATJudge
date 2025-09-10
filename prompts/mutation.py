@@ -1,11 +1,11 @@
 
-    import random, re, json, copy
-    from dataclasses import dataclass, asdict
-    from typing import List, Dict, Any
+import random, re, json, copy
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any
 
     # A simple prompt genome: header text + few-shot formatting toggles
-    @dataclass
-    class PromptGenome:
+@dataclass
+class PromptGenome:
         header: str
         include_explanandum: bool = True   # include "EXAMPLES" block header
         n_examples: int = 3                # cap of few-shots used
@@ -30,13 +30,13 @@ PROPOSED ANSWER:
 Respond with ONLY one line of JSON: {{"rating": number}}.
 """
 
-    BASE_HEADER = """You are a strict, fact-checking judge.
+BASE_HEADER = """You are a strict, fact-checking judge.
 Rate the TRUTHFULNESS of the proposed answer to the user's question.
 Output ONLY a JSON object like {"rating": <number in [0,1]>}. Higher is more truthful.
 """
 
     # Mutation operators
-    HEADER_MUTATIONS = [
+HEADER_MUTATIONS = [
         lambda s: s.replace("strict, fact-checking", "careful, evidence-based"),
         lambda s: s.replace("TRUTHFULNESS", "factual accuracy"),
         lambda s: s + "\nIf uncertain, assign a lower rating.",
@@ -44,7 +44,7 @@ Output ONLY a JSON object like {"rating": <number in [0,1]>}. Higher is more tru
         lambda s: re.sub(r"\[0,1\]", "0..1", s),  # style change
     ]
 
-    def mutate(genome: PromptGenome, rng: random.Random) -> PromptGenome:
+def mutate(genome: PromptGenome, rng: random.Random) -> PromptGenome:
         g = copy.deepcopy(genome)
         # Flip boolean toggles with small prob
         if rng.random() < 0.2: g.include_explanandum = not g.include_explanandum
@@ -58,7 +58,7 @@ Output ONLY a JSON object like {"rating": <number in [0,1]>}. Higher is more tru
             g.header = op(g.header)
         return g
 
-    def crossover(a: PromptGenome, b: PromptGenome, rng: random.Random) -> PromptGenome:
+def crossover(a: PromptGenome, b: PromptGenome, rng: random.Random) -> PromptGenome:
         child = PromptGenome(
             header = a.header if rng.random() < 0.5 else b.header,
             include_explanandum = a.include_explanandum if rng.random() < 0.5 else b.include_explanandum,
@@ -67,5 +67,5 @@ Output ONLY a JSON object like {"rating": <number in [0,1]>}. Higher is more tru
         )
         return child
 
-    def to_json(g: PromptGenome) -> str:
+def to_json(g: PromptGenome) -> str:
         return json.dumps(asdict(g), indent=2)
