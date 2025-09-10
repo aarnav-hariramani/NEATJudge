@@ -1,6 +1,11 @@
 
-# llm-judge
+# NEATJudge (TruthfulQA MC1, HF-only)
+- HF loader: `EleutherAI/truthful_qa_mc` (multiple_choice)
+- MC1 metric computed from judge scores (group-by-question argmax)
+- Selection: embeddings + optional NEAT + MMR
+- Judge: Ollama via LangChain
+- No eBay code
 
-Learned few-shot **retriever + judge** using NEAT for the selector policy and a JSON-only LLM judge.
-This repo implements query-conditioned K-shot selection from a **disjoint Bank** and evaluates
-on resampled fitness batches, with validation-based model selection to reduce overfitting.
+## Run
+pip install -r requirements.txt
+bash scripts/eval_truthfulqa.sh

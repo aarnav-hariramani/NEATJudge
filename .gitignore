@@ -1,6 +1,1 @@
-runs/
-cpkts/
-model/__pycache__/
-data/__pycache__/
-llms/__pycache__/
-utils/__pycache__/
+__pycache__/\n.venv/\nruns/\n*.pyc\n
