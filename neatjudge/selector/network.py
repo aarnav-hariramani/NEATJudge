@@ -4,8 +4,8 @@ import numpy as np
 try:
     import neat
 except Exception:
-    neat = None  # type: ignore
-
+    neat = None 
+    
 class Selector:
     def __init__(self, genome=None, neat_config_path: Optional[str] = None):
         self.net = None
