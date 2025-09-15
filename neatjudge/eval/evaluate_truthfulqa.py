@@ -1,15 +1,18 @@
-import argparse, neat, numpy as np
+import argparse, neat, numpy as np, os
 from ..utils.io import read_yaml
 from ..data.loaders import load_dataset_from_cfg
 from ..data.splits import split_bank_val
 from ..data.bank_index import BankIndex
 from ..evolution.prompt import DEFAULT_HEADER, assemble_prompt
+from ..evolution.selector import build_features
 from ..llms.judge import TransformersJudge
 from .metrics import mc1, mc2
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/default.yaml")
+    ap.add_argument("--header_path", default=None, help="Optional path to a champion_header.txt")
+    ap.add_argument("--selector_genome", default=None, help="Optional path to a champion_genome.pkl")
     args = ap.parse_args()
     cfg = read_yaml(args.config)
 
@@ -29,6 +32,9 @@ def main():
         idxs = bank_index.filter_similar(idxs, q_emb, cap=cfg["selector"]["K"])
         few = [bank[i] for i in idxs]
         header = DEFAULT_HEADER
+    if args.header_path and os.path.exists(args.header_path):
+        with open(args.header_path,'r') as fh:
+            header = fh.read()
         few = [bank[i] for i in idxs]; prompt = assemble_prompt(header, ex.question, ex.options, few_shots=few)
         # MC1 via LM logprobs
         pred_idx, probs = judge.score_choices(prompt, ex.options)
