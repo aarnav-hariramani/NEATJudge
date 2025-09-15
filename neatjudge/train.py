@@ -56,35 +56,11 @@ def main():
                 mc1_scores.append(1.0 if pred_idx==ex.correct_idx else 0.0)
             genome.fitness = 100.0 * float(np.mean(mc1_scores)) if mc1_scores else 0.0
 
-    best_overall = None
-best_overall_fit = -1.0
-for g in tqdm_gen(range(cfg["evolution"]["generations"]), "generations"):
+    for g in tqdm_gen(range(cfg["evolution"]["generations"]), "generations"):
         pop.run(eval_genomes, 1)
-        # track best of current generation
-        current_best = max(pop.population.values(), key=lambda gn: (gn.fitness or 0.0))
-        if (current_best.fitness or 0.0) > best_overall_fit:
-            best_overall = current_best
-            best_overall_fit = float(current_best.fitness or 0.0)
         # mutate prompt header occasionally
         if random.random() < 0.4:
             HEADER = mutate_header(HEADER)
-
-    # === CHAMPION SAVE PATCH ===
-    import os, pickle, time
-    run_dir = os.path.join(cfg['runs']['out_dir'], time.strftime('%Y%m%d-%H%M%S'))
-    os.makedirs(run_dir, exist_ok=True)
-    # save header
-    with open(os.path.join(run_dir, 'champion_header.txt'), 'w') as f:
-        f.write(HEADER)
-    # save genome
-    with open(os.path.join(run_dir, 'champion_genome.pkl'), 'wb') as f:
-        pickle.dump(best_overall, f)
-    # save a small manifest
-    import json
-    with open(os.path.join(run_dir, 'manifest.json'), 'w') as f:
-        json.dump({'fitness_mc1_val_slice': best_overall_fit,
-                   'config': cfg,
-                   'neat_config': cfg['neat_config']}, f, indent=2)
 
 if __name__ == "__main__":
     main()
