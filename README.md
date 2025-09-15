@@ -65,3 +65,15 @@ tests/
 - Swap `model_name` in `config/default.yaml` under `judge:` to your preferred HF model (e.g., `meta-llama/Llama-3.1-8B-Instruct` or a local one).
 - If you also want Ollama, add a parallel `OllamaJudge` (see previous repo); the selector / pipeline APIs are decoupled.
 - For paper alignment with GRATH, see considerations in comments and `README_GRATH_NOTES.md`.
+
+
+### Evaluate a trained champion
+After `bash scripts/run_train.sh` finishes, it saves `champion_header.txt` and `champion_genome.pkl` under `runs/<timestamp>/`.
+Run a full TruthfulQA eval (MC1/MC2) using them:
+
+```bash
+python -m neatjudge.eval.evaluate_truthfulqa \
+  --config config/default.yaml \
+  --header_path runs/<timestamp>/champion_header.txt \
+  --selector_genome runs/<timestamp>/champion_genome.pkl
+```
