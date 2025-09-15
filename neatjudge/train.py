@@ -18,14 +18,12 @@ def main():
     cfg = read_yaml(args.config)
     set_global_seed(cfg.get("data", {}).get("seed", 42))
 
-    # ==== DATA ====
     all_examples = load_dataset_from_cfg(cfg)               # TruthfulQA (HF)
     bank, val = split_bank_val(
-        all_examples,
-        bank_frac=cfg["data"]["bank_frac"],
-        val_frac=cfg["data"]["val_frac"],
-        seed=cfg["data"]["seed"]
-    )
+    all_examples,
+    val_frac=cfg["data"]["val_frac"],
+    seed=cfg["data"]["seed"]
+)
     bank_index = BankIndex.from_examples(bank, embed_model=cfg["selector"]["embed_model"])
 
     # ==== LLM ====

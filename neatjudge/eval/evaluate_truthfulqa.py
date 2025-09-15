@@ -20,11 +20,10 @@ def main():
     # dataset & split (this uses the full configured split — not the tiny training slice)
     all_examples = load_dataset_from_cfg(cfg)
     bank, val = split_bank_val(
-        all_examples,
-        bank_frac=cfg["data"]["bank_frac"],
-        val_frac=cfg["data"]["val_frac"],
-        seed=cfg["data"]["seed"]
-    )
+    all_examples,
+    val_frac=cfg["data"]["val_frac"],
+    seed=cfg["data"]["seed"]
+)
     bank_index = BankIndex.from_examples(bank, embed_model=cfg["selector"]["embed_model"])
 
     # header: default or champion override
