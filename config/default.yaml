@@ -1,6 +1,6 @@
 neat_config: config/neat.ini
 data:
-  dataset: truthfulqa_hf
+  dataset: truthfulqa_eleutherai_mc
   split: validation
   subset: multiple_choice
   seed: 42
