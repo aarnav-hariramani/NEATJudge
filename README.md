@@ -1,46 +1,67 @@
-# NEATJudge (Refactor)
+# NEATJudge (Refactor) — TruthfulQA (HF) + MC1/MC2
 
-A clean, modular pipeline for **LLM-as-Judge** with **NEAT**-based example selector and **TruthfulQA** evaluation (MC1/MC2).  
-This refactor removes the eBay dataset and standardizes on the Hugging Face `truthful_qa` dataset.
+This is a cleaned, modular refactor focused on **TruthfulQA** via the official Hugging Face dataset and the **MC1/MC2** metrics. 
+It removes the custom eBay dataset and wraps your NEAT-based selector in a reproducible pipeline.
 
-## Highlights
-- **Datasets**: loads `truthful_qa` (multiple_choice) directly from Hugging Face (`datasets`).
-- **Metrics**: MC1/MC2 using token log-likelihoods (Transformers backend) or a parsing fallback (Chat backends).
-- **Evolution**: NEAT selects few-shot examples from a *bank* to condition the judge prompt; prompt header mutates locally.
-- **Structure**: one module per responsibility: data, evolution, llms, eval, utils.
-- **Testing**: fast unit tests (no model downloads) with mocked backends.
+## Key changes
+- **Dataset** → `truthful_qa` (Hugging Face), subset `multiple_choice` (configurable via `config/default.yaml`).
+- **Metrics** → MC1/MC2 implemented in `neatjudge/eval/metrics.py` and used end-to-end.
+- **NEAT** → Your exact `neat.ini` copied verbatim (sha256: b3f195cccdbac4c38a7d63dbbe3c344ebdfdc0157ed9e2fe01f137880b72e6b7).
+- **Structure** → See the tree below.
+- **Tests** → `tests/` for metrics and selector; add more as you iterate.
 
-## Quickstart
-```bash
-# 1) Install
-pip install -r requirements.txt
-
-# 2) Evaluate TruthfulQA (MC1) using a local HF model
-python -m neatjudge.eval.evaluate_truthfulqa --config config/default.yaml
-
-# 3) Evolve selector + prompt against TruthfulQA validation
-python -m neatjudge.train --config config/default.yaml
-
-# 4) Run tests
-pytest -q
+## Install
+```
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt  # or: pip install -e .
 ```
 
-### Config Overview (`config/default.yaml`)
-- `data.dataset`: `truthfulqa_hf`
-- `llm.backend`: `transformers` (recommended for MC1/MC2) or `ollama`
-- `evolution`: NEAT population/generations, bank sizes
-- `selector.embed_model`: Sentence-Transformers name for embeddings
+## Quick eval (TruthfulQA)
+```
+python -m neatjudge.eval.evaluate_truthfulqa --config config/default.yaml
+```
 
-See inline comments in the config file.
+## Run prompt-evolution + selection
+- The selection network is built with `neat` using your `config/neat.ini`.
+- Retrieval/shortlisting uses `sentence-transformers` embeddings (`all-MiniLM-L6-v2` by default).
+- The LLM evaluator uses `Transformers` causal LMs and computes option log-probs for MC1/MC2.
 
-## Notes on MC1/MC2
-For **MC1**, we choose the option with the highest normalized log-probability given `(question + option)` with a consistent prompt template.  
-For **MC2**, we sum probabilities for *all* correct options and normalize by total across options.
+## Repo layout
+```
+NEATJudge-Refactor/
+  requirements.txt
+config/
+  default.yaml
+  neat.ini
+neatjudge/
+  __init__.py
+  train.py
+  data/
+    bank_index.py
+    loaders.py
+    splits.py
+  eval/
+    evaluate_truthfulqa.py
+    metrics.py
+  evolution/
+    mutate.py
+    prompt.py
+    selector.py
+  llms/
+    judge.py
+  utils/
+    io.py
+    logging.py
+    seed.py
+scripts/
+  run_eval_truthfulqa.sh
+  run_train.sh
+tests/
+  test_metrics.py
+  test_selector.py
+```
 
-> If you use `ollama` (chat-style) instead of `transformers`, MC1 uses a *parsing* fallback: we ask the model to output the letter (A/B/C/...). This is not strictly identical to the leaderboard's token-level probability evaluation. For publication-grade numbers, use the **transformers** backend.
-
-## NEAT & Prompt Evolution
-We use NEAT to score candidate few-shot banks for a query; the **Selector** net ranks bank examples from embeddings.  
-Prompt evolution performs **minimal, local edits** to a sectioned header (role/scale/output/ties/extra) to avoid rubric bloat.
-
----
+## Notes
+- Swap `model_name` in `config/default.yaml` under `judge:` to your preferred HF model (e.g., `meta-llama/Llama-3.1-8B-Instruct` or a local one).
+- If you also want Ollama, add a parallel `OllamaJudge` (see previous repo); the selector / pipeline APIs are decoupled.
+- For paper alignment with GRATH, see considerations in comments and `README_GRATH_NOTES.md`.
