@@ -24,7 +24,8 @@ def main():
     val_frac=cfg["data"]["val_frac"],
     seed=cfg["data"]["seed"]
 )
-    bank_index = BankIndex.from_examples(bank, embed_model=cfg["selector"]["embed_model"])
+    bank_index = BankIndex(bank, embed_model=cfg["selector"]["embed_model"])
+
 
     # header: default or champion override
     header = DEFAULT_HEADER
