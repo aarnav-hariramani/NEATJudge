@@ -59,6 +59,9 @@ class Genome:
         clone = Genome(self.tracker, self.genome_id)
         clone.nodes = {nid: n.clone() for nid, n in self.nodes.items()}
         clone.connections = {i: c.clone() for i, c in self.connections.items()}
+        clone.fitness = self.fitness
+        clone.safety_accuracy = self.safety_accuracy
+        clone.quality_accuracy = self.quality_accuracy
         return clone
 
     # ---- topology queries -----------------------------------------------------------
