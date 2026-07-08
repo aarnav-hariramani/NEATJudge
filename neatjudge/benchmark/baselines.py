@@ -73,10 +73,11 @@ class _PromptScorer:
     """
 
     def __init__(self, train: List[dict], client: LLMClient,
-                 safety_weight: float = _SAFETY_WEIGHT):
+                 safety_weight: float = _SAFETY_WEIGHT, rubric=None):
         self.train = train
         self.client = client
         self.safety_weight = safety_weight
+        self.rubric = rubric
         self._memo: Dict[str, float] = {}
 
     def __call__(self, instruction: str) -> float:
@@ -84,7 +85,8 @@ class _PromptScorer:
             return self._memo[instruction]
         g = single_node_genome(InnovationTracker(), instruction)
         ev = FitnessEvaluator(self.train, self.client, complexity_penalty=0.0,
-                              safety_weight=self.safety_weight, workers=_WORKERS)
+                              safety_weight=self.safety_weight, workers=_WORKERS,
+                              rubric=self.rubric)
         fit = ev.evaluate(g)
         self._memo[instruction] = fit
         return fit
@@ -97,12 +99,19 @@ def _propose(client: LLMClient, system: str, user: str) -> str:
 # ---- baselines (no optimization) ----------------------------------------------------
 
 
-def run_single_judge(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
+def run_single_judge(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT,
+                     rubric=None) -> Tuple[Genome, str]:
     return single_node_genome(InnovationTracker(), _BASE_INSTRUCTION), "no optimization"
 
 
-def run_panel_of_judges(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
-    specialists = ["Safety Arbitrator", "Fact-Checker", "Tone Judge"]
+def run_panel_of_judges(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT,
+                        rubric=None) -> Tuple[Genome, str]:
+    # With a rubric, the panel is exactly the axis owners so each specialist owns a
+    # distinct axis; otherwise the default safety/quality panel.
+    if rubric is not None:
+        specialists = [ax.owner for ax in rubric.axes]
+    else:
+        specialists = ["Safety Arbitrator", "Fact-Checker", "Tone Judge"]
     g = panel_genome(InnovationTracker(), specialists)
     return g, f"fixed panel: {', '.join(specialists)} -> Core Judge"
 
@@ -111,8 +120,8 @@ def run_panel_of_judges(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT
 
 
 def run_evoprompt_ga(train, client, rng, budget, pop=6, gens=3,
-                     safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
-    score = _PromptScorer(train, client, safety_weight)
+                     safety_weight=_SAFETY_WEIGHT, rubric=None) -> Tuple[Genome, str]:
+    score = _PromptScorer(train, client, safety_weight, rubric)
     sys_x = "You are optimizing an LLM judge's system instruction via an evolutionary algorithm."
 
     def mutate(instr: str) -> str:
@@ -157,8 +166,8 @@ def run_evoprompt_ga(train, client, rng, budget, pop=6, gens=3,
 
 
 def run_opro(train, client, rng, budget, steps=12, topk=6,
-             safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
-    score = _PromptScorer(train, client, safety_weight)
+             safety_weight=_SAFETY_WEIGHT, rubric=None) -> Tuple[Genome, str]:
+    score = _PromptScorer(train, client, safety_weight, rubric)
     sys_o = "You are optimizing an LLM judge's system instruction."
     trajectory: List[Tuple[str, float]] = [(_BASE_INSTRUCTION, score(_BASE_INSTRUCTION))]
 
@@ -182,9 +191,9 @@ def run_opro(train, client, rng, budget, steps=12, topk=6,
 
 
 def run_gepa_prompt(train, client, rng, budget, steps=8,
-                    safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
+                    safety_weight=_SAFETY_WEIGHT, rubric=None) -> Tuple[Genome, str]:
     ev = FitnessEvaluator(train, client, train_set=train, complexity_penalty=0.0,
-                          safety_weight=safety_weight, workers=_WORKERS)
+                          safety_weight=safety_weight, workers=_WORKERS, rubric=rubric)
     best = single_node_genome(InnovationTracker(), _BASE_INSTRUCTION)
     best_fit = ev.evaluate(best)
 
@@ -192,7 +201,8 @@ def run_gepa_prompt(train, client, rng, budget, steps=8,
     while used < steps and client.calls < budget:
         used += 1
         cand = best.clone()
-        changed = cand.mutate_prompt(rng, client, ev, reflective=True, batch_size=5)
+        changed = cand.mutate_prompt(rng, client, ev, reflective=True, batch_size=5,
+                                     rubric=rubric)
         if not changed:
             continue
         fit = ev.evaluate(cand)
@@ -206,7 +216,7 @@ def run_gepa_prompt(train, client, rng, budget, steps=8,
 
 
 def run_neatjudge(train, client, rng, budget, pop=6, gens=3,
-                  safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
+                  safety_weight=_SAFETY_WEIGHT, rubric=None) -> Tuple[Genome, str]:
     cfg = Config(
         population_size=pop, generations=gens, seed=7, eval_workers=_WORKERS,
         p_mutate_prompt=0.9, reflective_prompt_rewrite=True, reflection_batch=5,
@@ -215,7 +225,7 @@ def run_neatjudge(train, client, rng, budget, pop=6, gens=3,
     # eval_workers on the engine parallelizes across genomes; keep the evaluator's
     # own item loop sequential to avoid nesting thread pools.
     ev = FitnessEvaluator(train, client, train_set=train, complexity_penalty=0.1,
-                          safety_weight=safety_weight, workers=1)
+                          safety_weight=safety_weight, workers=1, rubric=rubric)
     with redirect_stdout(io.StringIO()):
         best = NEATJudge(cfg, ev, client).run()
     hidden = sum(1 for n in best.nodes.values() if n.node_type.value == "hidden")

@@ -102,16 +102,22 @@ def panel_genome(tracker: InnovationTracker, specialists: List[str]) -> Genome:
 
 
 def score_genome(genome: Genome, dataset: List[dict], client: LLMClient,
-                 safety_weight: float = 0.75, workers: int = 8) -> tuple:
+                 safety_weight: float = 0.75, workers: int = 8, rubric=None) -> tuple:
     """Score a genome on a dataset with NO complexity penalty (pure accuracy).
 
     The parsimony penalty is excluded here so methods are compared on judgment
     quality alone; agent count is reported separately. Returns
-    (fitness, safety_acc, quality_acc).
+    (fitness, primary_acc, secondary_acc): for the default scheme these are
+    (safety_acc, quality_acc); for a rubric they are (mean axis closeness, 0.0)
+    and the per-axis breakdown is available on ``genome.axis_accuracy``.
     """
     ev = FitnessEvaluator(dataset, client, complexity_penalty=0.0,
-                          safety_weight=safety_weight, workers=workers)
+                          safety_weight=safety_weight, workers=workers, rubric=rubric)
     fit = ev.evaluate(genome)
+    if rubric is not None:
+        acc = genome.axis_accuracy
+        mean_acc = (sum(acc.values()) / len(acc)) if acc else 0.0
+        return fit, mean_acc, 0.0
     return fit, genome.safety_accuracy, genome.quality_accuracy
 
 

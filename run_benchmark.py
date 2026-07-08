@@ -20,12 +20,14 @@ import time
 from pathlib import Path
 
 from neatjudge import (
+    HELPSTEER_RUBRIC,
     AnthropicClient,
     CachingLLMClient,
     MockLLMClient,
     build_public_safety_dataset,
     train_eval_split,
     try_load_beavertails,
+    try_load_helpsteer,
 )
 from neatjudge.benchmark import METHODS, CountingLLMClient, format_table
 from neatjudge.benchmark.harness import BenchmarkResult, n_judge_agents, score_genome
@@ -44,7 +46,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Benchmark NEATJudge vs baselines.")
     p.add_argument("--mock", action="store_true", help="use deterministic MockLLMClient")
     p.add_argument("--model", default="claude-opus-4-8")
-    p.add_argument("--dataset", choices=["bundled", "beavertails"], default="bundled")
+    p.add_argument("--dataset", choices=["bundled", "beavertails", "helpsteer"],
+                   default="bundled")
     p.add_argument("--limit", type=int, default=24, help="bundled: items used")
     p.add_argument("--eval-fraction", type=float, default=0.5, help="bundled: eval frac")
     p.add_argument("--train-size", type=int, default=24, help="beavertails: train items")
@@ -62,7 +65,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_split(args):
-    """Return (train, evalset, safety_weight, description)."""
+    """Return (train, evalset, safety_weight, rubric, description)."""
+    if args.dataset == "helpsteer":
+        need = args.train_size + args.eval_size
+        data = try_load_helpsteer(limit=need, seed=args.seed, pool=max(2000, need * 3))
+        if not data:
+            raise SystemExit("HelpSteer2 unavailable (no network / datasets-server).")
+        train = data[:args.train_size]
+        evalset = data[args.train_size:args.train_size + args.eval_size]
+        axes = "/".join(HELPSTEER_RUBRIC.names())
+        desc = f"HelpSteer2 train={len(train)} eval={len(evalset)} axes=[{axes}]"
+        return train, evalset, 1.0, HELPSTEER_RUBRIC, desc
     if args.dataset == "beavertails":
         need = args.train_size + args.eval_size
         data = try_load_beavertails(limit=need, seed=args.seed, pool=max(2000, need * 3))
@@ -70,14 +83,13 @@ def load_split(args):
             raise SystemExit("BeaverTails unavailable (no network / datasets-server).")
         train = data[:args.train_size]
         evalset = data[args.train_size:args.train_size + args.eval_size]
-        sw = 1.0   # BeaverTails labels safety only
         desc = f"BeaverTails train={len(train)} eval={len(evalset)} (safety-only)"
-        return train, evalset, sw, desc
+        return train, evalset, 1.0, None, desc
     dataset = build_public_safety_dataset(limit=args.limit)
     train, evalset = train_eval_split(dataset, eval_fraction=args.eval_fraction, seed=args.seed)
     sw = 1.0 if args.safety_only else 0.75
     desc = f"bundled train={len(train)} eval={len(evalset)} safety_weight={sw}"
-    return train, evalset, sw, desc
+    return train, evalset, sw, None, desc
 
 
 def main() -> None:
@@ -87,7 +99,7 @@ def main() -> None:
         model=args.model, max_tokens=args.max_tokens)
     shared = CachingLLMClient(base)   # dedupes real API cost across all methods
 
-    train, evalset, safety_weight, desc = load_split(args)
+    train, evalset, safety_weight, rubric, desc = load_split(args)
 
     wanted = set(filter(None, args.methods.split(","))) if args.methods else None
     methods = [m for m in METHODS if (wanted is None or m[0] in wanted)]
@@ -102,11 +114,15 @@ def main() -> None:
         rng = random.Random(args.seed)
         t0 = time.time()
         genome, notes = fn(train, counting, rng, args.budget,
-                           safety_weight=safety_weight, **PARAMS.get(key, {}))
+                           safety_weight=safety_weight, rubric=rubric, **PARAMS.get(key, {}))
         # Score on the held-out eval split with the shared (uncounted) client, so
         # `requests` reflects optimization only and is identical scoring for all.
         fit, sacc, qacc = score_genome(genome, evalset, shared,
-                                       safety_weight=safety_weight, workers=args.workers)
+                                       safety_weight=safety_weight, workers=args.workers,
+                                       rubric=rubric)
+        if rubric is not None:
+            notes = (notes + " | " +
+                     " ".join(f"{k}={v:.2f}" for k, v in genome.axis_accuracy.items()))
         secs = time.time() - t0
         res = BenchmarkResult(
             method=label, citation=citation, evolves_topology=evolves_topology,
