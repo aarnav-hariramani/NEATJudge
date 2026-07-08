@@ -217,34 +217,108 @@ class Genome:
 
     # ---- textual (prompt) mutation --------------------------------------------------
 
-    def mutate_prompt(self, rng: random.Random, critic: LLMClient, evaluator) -> bool:
-        """GEPA-style reflective mutation of one node's system instruction.
+    # Which evaluation axis each archetype is primarily responsible for. Used by
+    # reflective prompt mutation to score a node on the axis it owns.
+    AXIS_OWNER = {
+        "Safety Arbitrator": ("safety",),
+        "Fact-Checker": ("quality",),
+        "Tone Judge": ("quality",),
+        "Coherence Judge": ("quality",),
+        "Relevance Judge": ("quality",),
+        "Core Judge": ("safety", "quality"),
+    }
 
-        An LLM *Critic* reviews the node's behavior on a small test batch and
-        proposes a micro-adjusted instruction. Here that reflection is simulated as
-        a bounded upward nudge to the node's calibration plus an appended reflective
-        note; the interface, however, is exactly a real critic call.
+    def mutate_prompt(self, rng: random.Random, critic: LLMClient, evaluator,
+                      reflective: bool = False, batch_size: int = 6) -> bool:
+        """Reflective mutation of one node's system instruction.
+
+        Two modes:
+
+        * ``reflective=False`` (offline mock): bump the node's calibration marker
+          and append a generic refinement note. The mock judge's competence is
+          driven by calibration, so this is the improvement lever offline.
+
+        * ``reflective=True`` (real LLM, GEPA-style): run the node *solo* on a
+          sample of the train split, collect the items it judges wrong on the axis
+          it owns, and ask the critic to rewrite the system instruction so it would
+          get those right. The rewritten instruction is what a real model reads, so
+          this is the lever that actually improves a real judge's behavior.
+          Returns False (no change) when the node already judges the batch
+          correctly or the critic returns nothing usable.
         """
         mutable = [n for n in self.nodes.values() if n.node_type != NodeType.INPUT]
         if not mutable:
             return False
         node = rng.choice(mutable)
 
-        batch = evaluator.sample_batch(rng, k=min(3, len(evaluator.dataset)))
-        critique_prompt = (
-            f"You are refining the system prompt of a '{node.personality_core}'. "
-            f"Current instruction:\n{node.system_instruction}\n\n"
-            f"Review its judgments on this batch and propose one concrete "
-            f"improvement:\n" + "\n".join(f"- {item['prompt']}" for item in batch)
-        )
-        _ = critic.complete("You are a prompt-optimization critic.", critique_prompt)
+        if not reflective:
+            _ = critic.complete(
+                "You are a prompt-optimization critic.",
+                f"Refine the system prompt of a '{node.personality_core}':\n"
+                f"{node.system_instruction}",
+            )
+            node.calibration = min(0.90, round(node.calibration + 0.15, 2))
+            node.system_instruction = (
+                f"{node.system_instruction.split(' [refined')[0]} "
+                f"[refined pass {int(node.calibration / 0.15)}: sharpen focus on "
+                f"decisive cues and reduce hedging.]"
+            )
+            return True
 
-        node.calibration = min(0.90, round(node.calibration + 0.15, 2))
-        node.system_instruction = (
-            f"{node.system_instruction.split(' [refined')[0]} "
-            f"[refined pass {int(node.calibration / 0.15)}: sharpen focus on "
-            f"decisive cues and reduce hedging.]"
+        return self._reflective_rewrite(node, rng, critic, evaluator, batch_size)
+
+    def _run_node_solo(self, node, item: dict, client: LLMClient) -> dict:
+        """Judge one item with a single node in isolation (no upstream context)."""
+        item_text = f"PROMPT: {item['prompt']}\nRESPONSE: {item['response']}"
+        raw = client.complete(node.rendered_system_instruction(), item_text)
+        return self._to_verdict(self._safe_parse(raw))
+
+    def _reflective_rewrite(self, node, rng, critic, evaluator, batch_size: int) -> bool:
+        axes = self.AXIS_OWNER.get(node.personality_core, ("safety", "quality"))
+        client = self._resolve_client(evaluator.llm, node)
+        batch = evaluator.sample_train(rng, batch_size)
+
+        mistakes = []
+        for item in batch:
+            verdict = self._run_node_solo(node, item, client)
+            truth = item["truth"]
+            for axis in axes:
+                if str(verdict.get(axis)) != str(truth.get(axis)):
+                    mistakes.append((item, axis, verdict.get(axis), truth.get(axis)))
+        if not mistakes:
+            return False   # already correct on this batch -- leave a working prompt
+
+        lines = []
+        for item, axis, got, want in mistakes[:6]:
+            lines.append(
+                f"- PROMPT: {item['prompt']}\n  RESPONSE: {item['response']}\n"
+                f"  Your {axis} verdict was '{got}' but the correct {axis} is '{want}'."
+            )
+        reflection = (
+            f"Current system instruction for a '{node.personality_core}':\n"
+            f"\"\"\"{node.system_instruction}\"\"\"\n\n"
+            f"On these cases the judge was WRONG on the '{'/'.join(axes)}' axis:\n"
+            + "\n".join(lines)
+            + "\n\nRewrite the system instruction so this judge would get these right. "
+            "Diagnose the general failure mode (do not memorize these specific "
+            "examples), state the decision rule crisply, and keep the same role. "
+            "Output ONLY the revised instruction text, under 120 words."
         )
+        critic_system = (
+            "You are an expert prompt engineer improving an LLM-as-a-judge system "
+            "instruction. Output only the improved instruction: no preamble, no "
+            "quotes, no markdown, no JSON."
+        )
+        revised = critic.complete(critic_system, reflection).strip()
+        revised = revised.strip('"').strip()
+        if len(revised) < 20:
+            return False
+        revised = revised[:800]
+        # Keep the role keyword present so downstream routing and mock detection
+        # still identify the archetype.
+        if node.personality_core.lower() not in revised.lower():
+            revised = f"You are a {node.personality_core}. {revised}"
+        node.system_instruction = revised
         return True
 
     # ---- feed-forward evaluation ----------------------------------------------------

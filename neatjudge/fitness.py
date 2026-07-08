@@ -26,9 +26,12 @@ class FitnessEvaluator:
 
     COMPLEXITY_PENALTY = 0.4   # fitness points shaved per hidden agent
 
-    def __init__(self, dataset: List[dict], llm, *,
+    def __init__(self, dataset: List[dict], llm, *, train_set: List[dict] = None,
                  default_model: str = "", model_cost_weight: float = 0.0):
         self.dataset = dataset
+        # Reflection samples from train_set (disjoint from the scored `dataset` when
+        # provided) so prompts are not tuned on the exact items they are graded on.
+        self.train_set = train_set if train_set is not None else dataset
         self.llm = llm
         self.default_model = default_model
         self.model_cost_weight = model_cost_weight
@@ -45,6 +48,10 @@ class FitnessEvaluator:
 
     def sample_batch(self, rng: random.Random, k: int) -> List[dict]:
         return rng.sample(self.dataset, k) if k < len(self.dataset) else list(self.dataset)
+
+    def sample_train(self, rng: random.Random, k: int) -> List[dict]:
+        pool = self.train_set
+        return rng.sample(pool, k) if k < len(pool) else list(pool)
 
     def evaluate(self, genome: Genome) -> float:
         safety_hits = 0.0

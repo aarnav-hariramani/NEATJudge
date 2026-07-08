@@ -34,6 +34,14 @@ class Config:
     default_model: str = ""
     model_cost_weight: float = 0.0
 
+    # Reflective prompt mutation. False (default) = the offline mock path (bump the
+    # calibration marker). True = GEPA-style rewrite: the critic reads the node's
+    # actual errors on the train split and rewrites its system instruction. Use
+    # True with real LLM judges; it is the primary lever that lets a real model's
+    # judgments actually improve across generations.
+    reflective_prompt_rewrite: bool = False
+    reflection_batch: int = 6      # train items inspected per reflective mutation
+
     # Reproduction.
     survival_threshold: float = 0.5       # top fraction of a species that may breed
     elitism_min_size: int = 3             # species this big or larger copy their champ
