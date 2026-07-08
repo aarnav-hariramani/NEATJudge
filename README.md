@@ -112,6 +112,32 @@ python run_live.py                 # reflective evolution on Opus
 python run_live.py --no-reflect    # ablation: reflection off
 ```
 
+## Benchmark vs. other methods
+
+A unified, apples-to-apples harness (`neatjudge/benchmark/`) compares NEATJudge
+against non-NEAT LLM-as-a-judge optimizers — same model, train/eval split, scoring,
+and per-method call budget:
+
+| Method | topo | eval | safety | quality | agents | calls |
+|---|---|---|---|---|---|---|
+| OPRO (Yang '23) | no | **91.15** | 0.92 | 0.90 | 1 | 116 |
+| Panel of judges (Verga '24) | no | 90.62 | 0.92 | 0.88 | 4 | 0 |
+| Single judge (Zheng '23) | no | 84.90 | 0.83 | 0.90 | 1 | 0 |
+| EvoPrompt GA (Guo '24) | no | 84.90 | 0.83 | 0.90 | 1 | 115 |
+| GEPA (Agrawal '25) | no | 84.90 | 0.83 | 0.90 | 1 | 120 |
+| NEATJudge (ours) | yes | 84.90 | 0.83 | 0.90 | 2 | 246 |
+
+**Honest result:** on this small (12-item) held-out eval, NEATJudge did *not* win —
+OPRO and a fixed multi-agent Panel were strongest, and NEATJudge tied the baseline.
+The eval is tiny (high variance) and NEAT is split-sensitive (it improved 92.81→94.59
+on a different 20-item split). Full analysis, caveats, and how to run a larger, more
+reliable comparison: [`docs/benchmark_results.md`](docs/benchmark_results.md).
+
+```bash
+python run_benchmark.py            # live on Opus
+python run_benchmark.py --mock     # deterministic offline smoke run
+```
+
 ## Package layout
 
 ```
