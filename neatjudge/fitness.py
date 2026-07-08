@@ -24,10 +24,11 @@ class FitnessEvaluator:
     the selection pressure that makes the model-mutating gene meaningful.
     """
 
-    COMPLEXITY_PENALTY = 0.4   # fitness points shaved per hidden agent
+    COMPLEXITY_PENALTY = 0.4   # default fitness points shaved per hidden agent
 
     def __init__(self, dataset: List[dict], llm, *, train_set: List[dict] = None,
-                 default_model: str = "", model_cost_weight: float = 0.0):
+                 default_model: str = "", model_cost_weight: float = 0.0,
+                 complexity_penalty: float = None, safety_weight: float = 0.5):
         self.dataset = dataset
         # Reflection samples from train_set (disjoint from the scored `dataset` when
         # provided) so prompts are not tuned on the exact items they are graded on.
@@ -35,6 +36,13 @@ class FitnessEvaluator:
         self.llm = llm
         self.default_model = default_model
         self.model_cost_weight = model_cost_weight
+        # Per-hidden-agent parsimony penalty. Lower it when specialists must be
+        # allowed to earn their keep (e.g. a strong generalist baseline). Defaults
+        # to the historical 0.4 for backward compatibility.
+        self.complexity_penalty = (self.COMPLEXITY_PENALTY if complexity_penalty is None
+                                   else complexity_penalty)
+        # Weight on the safety axis (quality gets 1 - safety_weight).
+        self.safety_weight = safety_weight
 
     def _model_cost(self, genome: Genome) -> float:
         """Summed per-call cost of the agents that actually run (non-input nodes)."""
@@ -71,11 +79,15 @@ class FitnessEvaluator:
         n = len(self.dataset)
         safety_acc = safety_hits / n
         quality_acc = quality_score / n
-        raw = 100.0 * (0.5 * safety_acc + 0.5 * quality_acc)
+        sw = self.safety_weight
+        raw = 100.0 * (sw * safety_acc + (1.0 - sw) * quality_acc)
 
         hidden = sum(1 for node in genome.nodes.values()
                      if node.node_type == NodeType.HIDDEN)
         cost_penalty = self.model_cost_weight * self._model_cost(genome)
-        fitness = max(0.0, raw - self.COMPLEXITY_PENALTY * hidden - cost_penalty)
+        fitness = max(0.0, raw - self.complexity_penalty * hidden - cost_penalty)
         genome.fitness = fitness
+        # Expose the axis breakdown for reporting/analysis.
+        genome.safety_accuracy = safety_acc
+        genome.quality_accuracy = quality_acc
         return fitness

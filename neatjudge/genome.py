@@ -28,6 +28,8 @@ class Genome:
         self.connections: Dict[int, ConnectionGene] = {}   # keyed by innovation number
         self.fitness: float = 0.0
         self.adjusted_fitness: float = 0.0
+        self.safety_accuracy: float = 0.0    # set by FitnessEvaluator.evaluate
+        self.quality_accuracy: float = 0.0
 
     # ---- construction ---------------------------------------------------------------
 
