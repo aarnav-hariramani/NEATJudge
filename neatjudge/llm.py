@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, List
@@ -204,6 +205,42 @@ class MockLLMClient(LLMClient):
             except json.JSONDecodeError:
                 continue
         return peers
+
+
+class CachingLLMClient(LLMClient):
+    """Thread-safe memoizing wrapper around any :class:`LLMClient`.
+
+    Deterministic judges (temperature 0 / unset) return the same verdict for the
+    same (system, user) prompt, so across a population of near-identical genomes --
+    especially early generations that all share the base Core Judge instruction --
+    the vast majority of calls are exact duplicates. Caching collapses them, cutting
+    real-API cost and latency by a large factor. Safe to share across the evaluation
+    thread pool.
+    """
+
+    def __init__(self, wrapped: LLMClient):
+        self.wrapped = wrapped
+        self._cache: Dict[tuple, str] = {}
+        self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+
+    def complete(self, system_instruction: str, user_content: str) -> str:
+        key = (system_instruction, user_content)
+        with self._lock:
+            if key in self._cache:
+                self.hits += 1
+                return self._cache[key]
+        result = self.wrapped.complete(system_instruction, user_content)
+        with self._lock:
+            self._cache[key] = result
+            self.misses += 1
+        return result
+
+    def stats(self) -> str:
+        total = self.hits + self.misses
+        rate = (self.hits / total * 100.0) if total else 0.0
+        return f"cache: {self.hits} hits / {total} calls ({rate:.0f}% hit rate)"
 
 
 # ==================================================================================

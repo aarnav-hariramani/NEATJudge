@@ -27,6 +27,7 @@ from .llm import (
     MODEL_COST,
     OUTPUT_CONTRACT,
     AnthropicClient,
+    CachingLLMClient,
     LLMClient,
     MockLLMClient,
     ModelRouter,
@@ -47,6 +48,7 @@ __all__ = [
     "Genome",
     "InnovationTracker", "INPUT_NODE_ID", "OUTPUT_NODE_ID",
     "LLMClient", "MockLLMClient", "AnthropicClient", "OpenAIClient", "OUTPUT_CONTRACT",
+    "CachingLLMClient",
     "ModelRouter", "MODEL_COST", "DEFAULT_MODEL_COST",
     "Species",
 ]
