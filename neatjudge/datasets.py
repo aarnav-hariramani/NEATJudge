@@ -120,33 +120,97 @@ def train_eval_split(dataset: List[dict], eval_fraction: float = 0.5,
     return items[:cut], items[cut:]
 
 
-def try_load_beavertails(limit: int = 200, seed: int = 0) -> Optional[List[dict]]:
-    """Optionally load PKU-Alignment/BeaverTails from HuggingFace if available.
+def _fetch_beavertails_pool(pool: int, split: str, cache_path: str) -> List[dict]:
+    """Fetch raw BeaverTails rows via the HF datasets-server rows API (cached).
 
-    Returns None if the ``datasets`` package or network is unavailable, so callers
-    can fall back to :func:`build_public_safety_dataset`. Maps each QA pair's
-    ``is_safe`` flag to the safety axis; quality is left neutral (3) since
-    BeaverTails does not label quality.
+    Uses only the standard library + a local JSONL cache -- no `datasets` package
+    required. The public data is fetched at runtime and cached locally; it is not
+    redistributed in this repo.
+    """
+    import json as _json
+    import time
+    import urllib.parse
+    import urllib.request
+
+    cache = Path(cache_path)
+    rows: List[dict] = []
+    if cache.exists():
+        with open(cache, "r", encoding="utf-8") as fh:
+            rows = [_json.loads(ln) for ln in fh if ln.strip()]
+    if len(rows) >= pool:
+        return rows[:pool]
+
+    base = "https://datasets-server.huggingface.co/rows"
+    offset = len(rows)
+    while len(rows) < pool:
+        length = min(100, pool - len(rows))   # rows API caps length at 100
+        q = urllib.parse.urlencode({
+            "dataset": "PKU-Alignment/BeaverTails", "config": "default",
+            "split": split, "offset": offset, "length": length})
+        req = urllib.request.Request(f"{base}?{q}", headers={"User-Agent": "curl/8"})
+        for attempt in range(4):
+            try:
+                data = _json.loads(urllib.request.urlopen(req, timeout=30).read())
+                break
+            except Exception:
+                if attempt == 3:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        batch = data.get("rows", [])
+        if not batch:
+            break
+        rows.extend(r["row"] for r in batch)
+        offset += len(batch)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(_json.dumps(r) + "\n")
+    return rows[:pool]
+
+
+def try_load_beavertails(limit: int = 500, seed: int = 0, *, pool: int = 2000,
+                         split: str = "30k_test",
+                         cache_path: str = "runs/beavertails_pool.jsonl"
+                         ) -> Optional[List[dict]]:
+    """Load a balanced safety-labeled sample of PKU-Alignment/BeaverTails.
+
+    Fetches (and caches) a pool of rows via the HF datasets-server, then returns a
+    ``limit``-item sample balanced ~50/50 safe/unsafe. Each item maps ``is_safe`` to
+    the safety axis; quality is neutral (3) since BeaverTails has no quality label,
+    so use these items with ``safety_weight=1.0`` (a pure safety-judging benchmark).
+    Returns None if the data cannot be fetched, so callers can fall back to
+    :func:`build_public_safety_dataset`.
     """
     try:
-        from datasets import load_dataset  # type: ignore
+        rows = _fetch_beavertails_pool(pool, split, cache_path)
     except Exception:
         return None
-    try:
-        ds = load_dataset("PKU-Alignment/BeaverTails", split="30k_test")
-    except Exception:
+    if not rows:
         return None
+
+    safe = [r for r in rows if r.get("is_safe")]
+    unsafe = [r for r in rows if not r.get("is_safe")]
     rng = random.Random(seed)
-    idx = list(range(len(ds)))
-    rng.shuffle(idx)
+    rng.shuffle(safe)
+    rng.shuffle(unsafe)
+    half = limit // 2
+    chosen = safe[:half] + unsafe[:limit - half]
+    rng.shuffle(chosen)
+
+    def _category(raw) -> str:
+        # BeaverTails `category` is a dict {subcategory: bool}; summarize as a string.
+        if isinstance(raw, dict):
+            flagged = [k for k, v in raw.items() if v]
+            return ",".join(flagged) if flagged else "none"
+        return str(raw) if raw is not None else "beavertails"
+
     out: List[dict] = []
-    for i in idx[:limit]:
-        row = ds[i]
+    for i, r in enumerate(chosen):
         out.append({
             "id": f"bt{i}",
-            "prompt": row["prompt"],
-            "response": row["response"],
-            "category": "beavertails",
-            "truth": {"safety": "safe" if row["is_safe"] else "unsafe", "quality": 3},
+            "prompt": r["prompt"],
+            "response": r["response"],
+            "category": _category(r.get("category")),
+            "truth": {"safety": "safe" if r.get("is_safe") else "unsafe", "quality": 3},
         })
     return out
