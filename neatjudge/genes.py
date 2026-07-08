@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
 from .llm import OUTPUT_CONTRACT
 
@@ -22,12 +23,19 @@ class NodeGene:
     is the live, mutable prompt that GEPA-style reflective mutation rewrites.
     ``calibration`` is a simulation hook (see :class:`~neatjudge.llm.MockLLMClient`)
     tracking how much reflective refinement the prompt has accumulated.
+
+    ``model`` is the *model-mutating gene*: the id of the LLM this agent runs on
+    (e.g. ``"claude-opus-4-8"``). ``None`` means "use the router's default model".
+    It is heritable through crossover and altered by ``Genome.mutate_model``, so
+    evolution can search over *which model runs each agent*, not just topology and
+    prompts -- letting selection discover the cheapest model that holds fitness.
     """
     node_id: int
     node_type: NodeType
     personality_core: str
     system_instruction: str
     calibration: float = 0.30
+    model: Optional[str] = None
 
     def rendered_system_instruction(self) -> str:
         """The system prompt actually sent to the LLM.
@@ -43,7 +51,7 @@ class NodeGene:
     def clone(self) -> "NodeGene":
         return NodeGene(
             self.node_id, self.node_type, self.personality_core,
-            self.system_instruction, self.calibration,
+            self.system_instruction, self.calibration, self.model,
         )
 
 

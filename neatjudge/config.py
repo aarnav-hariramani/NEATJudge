@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List
 
 
 @dataclass
@@ -25,6 +26,13 @@ class Config:
     p_add_node: float = 0.25
     p_add_edge: float = 0.35
     p_mutate_prompt: float = 0.80
+
+    # Model-mutating gene. When p_mutate_model > 0, agents may switch model within
+    # model_pool; model_cost_weight biases fitness toward cheaper models.
+    p_mutate_model: float = 0.0
+    model_pool: List[str] = field(default_factory=list)
+    default_model: str = ""
+    model_cost_weight: float = 0.0
 
     # Reproduction.
     survival_threshold: float = 0.5       # top fraction of a species that may breed

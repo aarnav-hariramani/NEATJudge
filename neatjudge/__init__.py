@@ -17,10 +17,13 @@ from .genes import ConnectionGene, NodeGene, NodeType, default_weight_text
 from .genome import Genome
 from .innovation import INPUT_NODE_ID, OUTPUT_NODE_ID, InnovationTracker
 from .llm import (
+    DEFAULT_MODEL_COST,
+    MODEL_COST,
     OUTPUT_CONTRACT,
     AnthropicClient,
     LLMClient,
     MockLLMClient,
+    ModelRouter,
     OpenAIClient,
 )
 from .speciation import Species
@@ -37,5 +40,6 @@ __all__ = [
     "Genome",
     "InnovationTracker", "INPUT_NODE_ID", "OUTPUT_NODE_ID",
     "LLMClient", "MockLLMClient", "AnthropicClient", "OpenAIClient", "OUTPUT_CONTRACT",
+    "ModelRouter", "MODEL_COST", "DEFAULT_MODEL_COST",
     "Species",
 ]

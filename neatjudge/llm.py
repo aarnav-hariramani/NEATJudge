@@ -53,6 +53,47 @@ class LLMClient(ABC):
         raise NotImplementedError
 
 
+# ----------------------------------------------------------------------------------
+# Model-mutating-gene support: relative per-call cost weights and a per-node router.
+# ----------------------------------------------------------------------------------
+# Relative cost per model call (unitless; used only to bias evolution toward
+# cheaper models when they don't hurt fitness). Extend for other providers.
+MODEL_COST: Dict[str, float] = {
+    "claude-opus-4-8": 5.0,
+    "claude-opus-4-7": 5.0,
+    "claude-opus-4-6": 5.0,
+    "claude-sonnet-4-6": 3.0,
+    "claude-sonnet-4-5": 3.0,
+    "claude-haiku-4-5": 1.0,
+    "gpt-4o": 4.0,
+    "gpt-4o-mini": 1.0,
+}
+DEFAULT_MODEL_COST = 2.0
+
+
+class ModelRouter:
+    """Routes each agent to a model-specific :class:`LLMClient`.
+
+    A :class:`~neatjudge.genes.NodeGene` carries a ``model`` gene; the router maps
+    that id to a client, falling back to ``default`` when the gene is ``None`` or
+    the model has no registered client. Passing a router (instead of a single
+    client) into ``Genome.evaluate_item`` is what makes per-agent model choice --
+    and thus the model-mutating gene -- take effect at evaluation time.
+    """
+
+    def __init__(self, default: LLMClient, clients_by_model: Dict[str, LLMClient] | None = None):
+        self.default = default
+        self.by_model: Dict[str, LLMClient] = dict(clients_by_model or {})
+
+    def register(self, model: str, client: LLMClient) -> "ModelRouter":
+        self.by_model[model] = client
+        return self
+
+    def client_for(self, node) -> LLMClient:
+        model = getattr(node, "model", None)
+        return self.by_model.get(model, self.default) if model else self.default
+
+
 # ==================================================================================
 # Deterministic offline simulator
 # ==================================================================================

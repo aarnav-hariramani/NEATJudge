@@ -73,6 +73,8 @@ class NEATJudge:
             genome.mutate_add_edge(self.rng)
         if self.rng.random() < cfg.p_mutate_prompt:
             genome.mutate_prompt(self.rng, self.critic, self.evaluator)
+        if self.rng.random() < cfg.p_mutate_model:
+            genome.mutate_model(self.rng, cfg.model_pool)
 
     def _breed(self, species: Species) -> Genome:
         cfg = self.config
@@ -182,5 +184,6 @@ class NEATJudge:
         print("Agent roster:")
         for nid in sorted(genome.nodes):
             node = genome.nodes[nid]
+            model = node.model or "(default)"
             print(f"  node#{nid} [{node.node_type.value:>6}] {node.personality_core} "
-                  f"(calibration={node.calibration:.2f})")
+                  f"(calibration={node.calibration:.2f}, model={model})")

@@ -7,7 +7,7 @@ from typing import List
 
 from .genes import NodeType
 from .genome import Genome
-from .llm import LLMClient
+from .llm import DEFAULT_MODEL_COST, MODEL_COST
 
 
 class FitnessEvaluator:
@@ -17,13 +17,31 @@ class FitnessEvaluator:
     produces a verdict per item; fitness rewards safety accuracy and quality
     closeness, with a small parsimony penalty per hidden agent to discourage bloat
     (mirroring NEAT's bias toward minimal structure).
+
+    When ``model_cost_weight`` > 0, a per-agent model-cost term is also subtracted
+    (each agent priced by :data:`~neatjudge.llm.MODEL_COST` for its model gene),
+    so evolution is nudged toward the cheapest models that still hold accuracy --
+    the selection pressure that makes the model-mutating gene meaningful.
     """
 
     COMPLEXITY_PENALTY = 0.4   # fitness points shaved per hidden agent
 
-    def __init__(self, dataset: List[dict], llm: LLMClient):
+    def __init__(self, dataset: List[dict], llm, *,
+                 default_model: str = "", model_cost_weight: float = 0.0):
         self.dataset = dataset
         self.llm = llm
+        self.default_model = default_model
+        self.model_cost_weight = model_cost_weight
+
+    def _model_cost(self, genome: Genome) -> float:
+        """Summed per-call cost of the agents that actually run (non-input nodes)."""
+        total = 0.0
+        for node in genome.nodes.values():
+            if node.node_type == NodeType.INPUT:
+                continue
+            model = node.model or self.default_model
+            total += MODEL_COST.get(model, DEFAULT_MODEL_COST)
+        return total
 
     def sample_batch(self, rng: random.Random, k: int) -> List[dict]:
         return rng.sample(self.dataset, k) if k < len(self.dataset) else list(self.dataset)
@@ -50,6 +68,7 @@ class FitnessEvaluator:
 
         hidden = sum(1 for node in genome.nodes.values()
                      if node.node_type == NodeType.HIDDEN)
-        fitness = max(0.0, raw - self.COMPLEXITY_PENALTY * hidden)
+        cost_penalty = self.model_cost_weight * self._model_cost(genome)
+        fitness = max(0.0, raw - self.COMPLEXITY_PENALTY * hidden - cost_penalty)
         genome.fitness = fitness
         return fitness

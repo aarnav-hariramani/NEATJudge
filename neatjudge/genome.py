@@ -178,6 +178,23 @@ class Genome:
         )
         return True
 
+    def mutate_model(self, rng: random.Random, model_pool: List[str]) -> bool:
+        """Model-mutating gene: reassign one agent's model from the allowed pool.
+
+        Picks a non-input node and sets its ``model`` gene to a (different) member
+        of ``model_pool``. The choice is heritable through crossover, so evolution
+        searches over which model runs each agent alongside topology and prompts.
+        """
+        if not model_pool:
+            return False
+        candidates = [n for n in self.nodes.values() if n.node_type != NodeType.INPUT]
+        if not candidates:
+            return False
+        node = rng.choice(candidates)
+        choices = [m for m in model_pool if m != node.model] or list(model_pool)
+        node.model = rng.choice(choices)
+        return True
+
     def mutate_add_edge(self, rng: random.Random, max_tries: int = 20) -> bool:
         """Add a new context pathway between two existing agents (feed-forward only)."""
         node_ids = list(self.nodes.keys())
@@ -232,12 +249,24 @@ class Genome:
 
     # ---- feed-forward evaluation ----------------------------------------------------
 
-    def evaluate_item(self, item: dict, llm: LLMClient) -> dict:
+    @staticmethod
+    def _resolve_client(llm, node):
+        """Pick the client for a node: a ModelRouter routes by the node's model
+        gene; a plain LLMClient is used for every node."""
+        if hasattr(llm, "client_for"):
+            return llm.client_for(node)
+        return llm
+
+    def evaluate_item(self, item: dict, llm) -> dict:
         """Run one dataset item through the agent graph and return the OUTPUT verdict.
 
         Nodes fire in topological order. Each non-input node is handed the item plus
-        the JSON verdicts of its upstream neighbors (formatted per edge weight). The
-        verdict emitted by the OUTPUT node is the graph's answer.
+        the JSON verdicts of its upstream neighbors (formatted per edge weight) and
+        is executed on the client resolved for its model gene. The verdict emitted
+        by the OUTPUT node is the graph's answer.
+
+        ``llm`` may be a single :class:`~neatjudge.llm.LLMClient` (used for every
+        node) or a :class:`~neatjudge.llm.ModelRouter` (routes per node's model gene).
         """
         emitted: Dict[int, dict] = {}
         item_text = f"PROMPT: {item['prompt']}\nRESPONSE: {item['response']}"
@@ -257,7 +286,8 @@ class Genome:
                     context_lines.append(f"UPSTREAM_JSON::{json.dumps(up)}")
 
             user_content = "\n".join(context_lines)
-            raw = llm.complete(node.rendered_system_instruction(), user_content)
+            client = self._resolve_client(llm, node)
+            raw = client.complete(node.rendered_system_instruction(), user_content)
             emitted[node_id] = self._safe_parse(raw)
 
         return self._to_verdict(emitted.get(OUTPUT_NODE_ID, {}))
