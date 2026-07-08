@@ -72,9 +72,11 @@ class _PromptScorer:
     evaluations; the shared cache also dedupes across methods.
     """
 
-    def __init__(self, train: List[dict], client: LLMClient):
+    def __init__(self, train: List[dict], client: LLMClient,
+                 safety_weight: float = _SAFETY_WEIGHT):
         self.train = train
         self.client = client
+        self.safety_weight = safety_weight
         self._memo: Dict[str, float] = {}
 
     def __call__(self, instruction: str) -> float:
@@ -82,7 +84,7 @@ class _PromptScorer:
             return self._memo[instruction]
         g = single_node_genome(InnovationTracker(), instruction)
         ev = FitnessEvaluator(self.train, self.client, complexity_penalty=0.0,
-                              safety_weight=_SAFETY_WEIGHT, workers=_WORKERS)
+                              safety_weight=self.safety_weight, workers=_WORKERS)
         fit = ev.evaluate(g)
         self._memo[instruction] = fit
         return fit
@@ -95,11 +97,11 @@ def _propose(client: LLMClient, system: str, user: str) -> str:
 # ---- baselines (no optimization) ----------------------------------------------------
 
 
-def run_single_judge(train, client, rng, budget) -> Tuple[Genome, str]:
+def run_single_judge(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
     return single_node_genome(InnovationTracker(), _BASE_INSTRUCTION), "no optimization"
 
 
-def run_panel_of_judges(train, client, rng, budget) -> Tuple[Genome, str]:
+def run_panel_of_judges(train, client, rng, budget, safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
     specialists = ["Safety Arbitrator", "Fact-Checker", "Tone Judge"]
     g = panel_genome(InnovationTracker(), specialists)
     return g, f"fixed panel: {', '.join(specialists)} -> Core Judge"
@@ -108,8 +110,9 @@ def run_panel_of_judges(train, client, rng, budget) -> Tuple[Genome, str]:
 # ---- EvoPrompt (GA over prompt text) ------------------------------------------------
 
 
-def run_evoprompt_ga(train, client, rng, budget, pop=6, gens=3) -> Tuple[Genome, str]:
-    score = _PromptScorer(train, client)
+def run_evoprompt_ga(train, client, rng, budget, pop=6, gens=3,
+                     safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
+    score = _PromptScorer(train, client, safety_weight)
     sys_x = "You are optimizing an LLM judge's system instruction via an evolutionary algorithm."
 
     def mutate(instr: str) -> str:
@@ -153,8 +156,9 @@ def run_evoprompt_ga(train, client, rng, budget, pop=6, gens=3) -> Tuple[Genome,
 # ---- OPRO (LLM-as-optimizer) --------------------------------------------------------
 
 
-def run_opro(train, client, rng, budget, steps=12, topk=6) -> Tuple[Genome, str]:
-    score = _PromptScorer(train, client)
+def run_opro(train, client, rng, budget, steps=12, topk=6,
+             safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
+    score = _PromptScorer(train, client, safety_weight)
     sys_o = "You are optimizing an LLM judge's system instruction."
     trajectory: List[Tuple[str, float]] = [(_BASE_INSTRUCTION, score(_BASE_INSTRUCTION))]
 
@@ -177,9 +181,10 @@ def run_opro(train, client, rng, budget, steps=12, topk=6) -> Tuple[Genome, str]
 # ---- GEPA (reflective prompt evolution, no topology) --------------------------------
 
 
-def run_gepa_prompt(train, client, rng, budget, steps=8) -> Tuple[Genome, str]:
+def run_gepa_prompt(train, client, rng, budget, steps=8,
+                    safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
     ev = FitnessEvaluator(train, client, train_set=train, complexity_penalty=0.0,
-                          safety_weight=_SAFETY_WEIGHT, workers=_WORKERS)
+                          safety_weight=safety_weight, workers=_WORKERS)
     best = single_node_genome(InnovationTracker(), _BASE_INSTRUCTION)
     best_fit = ev.evaluate(best)
 
@@ -200,7 +205,8 @@ def run_gepa_prompt(train, client, rng, budget, steps=8) -> Tuple[Genome, str]:
 # ---- NEATJudge (ours: topology + prompts + speciation) ------------------------------
 
 
-def run_neatjudge(train, client, rng, budget, pop=6, gens=3) -> Tuple[Genome, str]:
+def run_neatjudge(train, client, rng, budget, pop=6, gens=3,
+                  safety_weight=_SAFETY_WEIGHT) -> Tuple[Genome, str]:
     cfg = Config(
         population_size=pop, generations=gens, seed=7, eval_workers=_WORKERS,
         p_mutate_prompt=0.9, reflective_prompt_rewrite=True, reflection_batch=5,
@@ -209,7 +215,7 @@ def run_neatjudge(train, client, rng, budget, pop=6, gens=3) -> Tuple[Genome, st
     # eval_workers on the engine parallelizes across genomes; keep the evaluator's
     # own item loop sequential to avoid nesting thread pools.
     ev = FitnessEvaluator(train, client, train_set=train, complexity_penalty=0.1,
-                          safety_weight=_SAFETY_WEIGHT, workers=1)
+                          safety_weight=safety_weight, workers=1)
     with redirect_stdout(io.StringIO()):
         best = NEATJudge(cfg, ev, client).run()
     hidden = sum(1 for n in best.nodes.values() if n.node_type.value == "hidden")
