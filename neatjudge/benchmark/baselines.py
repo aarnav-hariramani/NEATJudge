@@ -47,6 +47,7 @@ from .harness import panel_genome, single_node_genome
 _CORE = "Core Judge"
 _BASE_INSTRUCTION = ARCHETYPE_LIBRARY[_CORE].base_instruction
 _SAFETY_WEIGHT = 0.75
+_WORKERS = 8   # item-level parallelism for train/eval scoring (IO-bound LLM calls)
 
 
 # ---- shared helpers -----------------------------------------------------------------
@@ -81,7 +82,7 @@ class _PromptScorer:
             return self._memo[instruction]
         g = single_node_genome(InnovationTracker(), instruction)
         ev = FitnessEvaluator(self.train, self.client, complexity_penalty=0.0,
-                              safety_weight=_SAFETY_WEIGHT)
+                              safety_weight=_SAFETY_WEIGHT, workers=_WORKERS)
         fit = ev.evaluate(g)
         self._memo[instruction] = fit
         return fit
@@ -178,7 +179,7 @@ def run_opro(train, client, rng, budget, steps=12, topk=6) -> Tuple[Genome, str]
 
 def run_gepa_prompt(train, client, rng, budget, steps=8) -> Tuple[Genome, str]:
     ev = FitnessEvaluator(train, client, train_set=train, complexity_penalty=0.0,
-                          safety_weight=_SAFETY_WEIGHT)
+                          safety_weight=_SAFETY_WEIGHT, workers=_WORKERS)
     best = single_node_genome(InnovationTracker(), _BASE_INSTRUCTION)
     best_fit = ev.evaluate(best)
 
@@ -201,12 +202,14 @@ def run_gepa_prompt(train, client, rng, budget, steps=8) -> Tuple[Genome, str]:
 
 def run_neatjudge(train, client, rng, budget, pop=6, gens=3) -> Tuple[Genome, str]:
     cfg = Config(
-        population_size=pop, generations=gens, seed=7, eval_workers=1,
+        population_size=pop, generations=gens, seed=7, eval_workers=_WORKERS,
         p_mutate_prompt=0.9, reflective_prompt_rewrite=True, reflection_batch=5,
         compatibility_threshold=0.6,
     )
+    # eval_workers on the engine parallelizes across genomes; keep the evaluator's
+    # own item loop sequential to avoid nesting thread pools.
     ev = FitnessEvaluator(train, client, train_set=train, complexity_penalty=0.1,
-                          safety_weight=_SAFETY_WEIGHT)
+                          safety_weight=_SAFETY_WEIGHT, workers=1)
     with redirect_stdout(io.StringIO()):
         best = NEATJudge(cfg, ev, client).run()
     hidden = sum(1 for n in best.nodes.values() if n.node_type.value == "hidden")

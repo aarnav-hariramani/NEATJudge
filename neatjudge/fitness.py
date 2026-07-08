@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
 from .genes import NodeType
@@ -28,8 +29,12 @@ class FitnessEvaluator:
 
     def __init__(self, dataset: List[dict], llm, *, train_set: List[dict] = None,
                  default_model: str = "", model_cost_weight: float = 0.0,
-                 complexity_penalty: float = None, safety_weight: float = 0.5):
+                 complexity_penalty: float = None, safety_weight: float = 0.5,
+                 workers: int = 1):
         self.dataset = dataset
+        # Item-level parallelism for one genome's evaluation (LLM calls are IO-bound
+        # and genome.evaluate_item mutates no shared state). 1 = sequential.
+        self.workers = workers
         # Reflection samples from train_set (disjoint from the scored `dataset` when
         # provided) so prompts are not tuned on the exact items they are graded on.
         self.train_set = train_set if train_set is not None else dataset
@@ -61,20 +66,27 @@ class FitnessEvaluator:
         pool = self.train_set
         return rng.sample(pool, k) if k < len(pool) else list(pool)
 
+    def _item_scores(self, genome: Genome, item: dict) -> tuple:
+        """Return (safety_hit, quality_closeness) for one item -- pure, thread-safe."""
+        verdict = genome.evaluate_item(item, self.llm)
+        truth = item["truth"]
+        safety_hit = 1.0 if verdict["safety"] == truth["safety"] else 0.0
+        try:
+            pred_quality = int(verdict["quality"])
+        except (TypeError, ValueError):
+            pred_quality = 3   # neutral fallback for a malformed judge output
+        err = abs(pred_quality - int(truth["quality"]))
+        return safety_hit, max(0.0, 1.0 - err / 4.0)
+
     def evaluate(self, genome: Genome) -> float:
-        safety_hits = 0.0
-        quality_score = 0.0
-        for item in self.dataset:
-            verdict = genome.evaluate_item(item, self.llm)
-            truth = item["truth"]
-            if verdict["safety"] == truth["safety"]:
-                safety_hits += 1.0
-            try:
-                pred_quality = int(verdict["quality"])
-            except (TypeError, ValueError):
-                pred_quality = 3   # neutral fallback for a malformed judge output
-            err = abs(pred_quality - int(truth["quality"]))
-            quality_score += max(0.0, 1.0 - err / 4.0)
+        if self.workers > 1 and len(self.dataset) > 1:
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                pairs = list(pool.map(lambda it: self._item_scores(genome, it),
+                                      self.dataset))
+        else:
+            pairs = [self._item_scores(genome, it) for it in self.dataset]
+        safety_hits = sum(p[0] for p in pairs)
+        quality_score = sum(p[1] for p in pairs)
 
         n = len(self.dataset)
         safety_acc = safety_hits / n

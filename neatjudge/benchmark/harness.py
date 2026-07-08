@@ -8,6 +8,7 @@ Optimization LLM calls are counted per method via :class:`CountingLLMClient`.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -29,9 +30,11 @@ class CountingLLMClient(LLMClient):
     def __init__(self, wrapped: LLMClient):
         self.wrapped = wrapped
         self.calls = 0
+        self._lock = threading.Lock()
 
     def complete(self, system_instruction: str, user_content: str) -> str:
-        self.calls += 1
+        with self._lock:
+            self.calls += 1
         return self.wrapped.complete(system_instruction, user_content)
 
 
@@ -99,7 +102,7 @@ def panel_genome(tracker: InnovationTracker, specialists: List[str]) -> Genome:
 
 
 def score_genome(genome: Genome, dataset: List[dict], client: LLMClient,
-                 safety_weight: float = 0.75) -> tuple:
+                 safety_weight: float = 0.75, workers: int = 8) -> tuple:
     """Score a genome on a dataset with NO complexity penalty (pure accuracy).
 
     The parsimony penalty is excluded here so methods are compared on judgment
@@ -107,7 +110,7 @@ def score_genome(genome: Genome, dataset: List[dict], client: LLMClient,
     (fitness, safety_acc, quality_acc).
     """
     ev = FitnessEvaluator(dataset, client, complexity_penalty=0.0,
-                          safety_weight=safety_weight)
+                          safety_weight=safety_weight, workers=workers)
     fit = ev.evaluate(genome)
     return fit, genome.safety_accuracy, genome.quality_accuracy
 
