@@ -95,6 +95,23 @@ router = (ModelRouter(AnthropicClient("claude-haiku-4-5"))
 # Agents with model gene "claude-opus-4-8" run on Opus; everything else on Haiku.
 ```
 
+## Results & diagnosis
+
+On real Opus 4.8 over the bundled 40-item public safety set (held-out eval split),
+evolution improves **92.81 → 94.59**, selecting a `Safety Arbitrator → Core Judge`
+topology and reflectively rewriting the Core Judge's prompt (final safety_acc 0.95,
+quality_acc 0.94). See [`docs/live_reflective_run.md`](docs/live_reflective_run.md).
+
+An earlier run was flat — [`DIAGNOSIS.md`](DIAGNOSIS.md) explains why (prompt
+mutation was a no-op for real models; parsimony penalty outweighed a tiny/noisy
+8-item signal) and the fixes (reflective rewrite, larger public dataset with
+train/eval split, configurable penalty + safety weighting, caching).
+
+```bash
+python run_live.py                 # reflective evolution on Opus
+python run_live.py --no-reflect    # ablation: reflection off
+```
+
 ## Package layout
 
 ```
