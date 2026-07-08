@@ -222,12 +222,14 @@ class AnthropicClient(LLMClient):
     def __init__(
         self,
         model: str = "claude-opus-4-8",
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_tokens: int = 512,
         max_retries: int = 4,
         base_backoff: float = 1.5,
     ):
         self.model = model
+        # Some models/gateways reject an explicit temperature; only send it when
+        # the caller sets one. Default (None) omits the field entirely.
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
@@ -242,16 +244,18 @@ class AnthropicClient(LLMClient):
 
     def complete(self, system_instruction: str, user_content: str) -> str:
         client = self._ensure_client()
+        kwargs = dict(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system_instruction,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         last_err: Exception | None = None
         for attempt in range(self.max_retries):
             try:
-                resp = client.messages.create(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    system=system_instruction,
-                    messages=[{"role": "user", "content": user_content}],
-                )
+                resp = client.messages.create(**kwargs)
                 # Concatenate any text blocks in the response content.
                 return "".join(
                     block.text for block in resp.content
