@@ -1,5 +1,11 @@
 # Benchmark: NEATJudge vs. non-NEAT LLM-as-a-judge optimizers
 
+> **Note:** this is a single 12-item split and is dominated by variance (NEATJudge
+> ranks last here purely by luck of the split). The reliable, seed-averaged result
+> is in [`benchmark_sweep.md`](benchmark_sweep.md), where NEATJudge is co-best.
+> This page is kept as an illustration of why single small-eval rankings are noisy.
+
+
 A live, apples-to-apples comparison on **claude-opus-4-8**. Every method optimizes
 a judge on the **train** split and is scored on the **held-out eval** split by the
 same scoring function (safety-weighted 0.75, no parsimony penalty → pure accuracy),

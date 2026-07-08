@@ -115,26 +115,33 @@ python run_live.py --no-reflect    # ablation: reflection off
 ## Benchmark vs. other methods
 
 A unified, apples-to-apples harness (`neatjudge/benchmark/`) compares NEATJudge
-against non-NEAT LLM-as-a-judge optimizers — same model, train/eval split, scoring,
-and per-method call budget:
+against non-NEAT LLM-as-a-judge methods — same model, train/eval split, scoring,
+and per-method call accounting. **Seed-averaged over 5 splits** (20-item eval each)
+on Opus 4.8 — mean ± std, higher is better:
 
-| Method | topo | eval | safety | quality | agents | calls |
-|---|---|---|---|---|---|---|
-| OPRO (Yang '23) | no | **91.15** | 0.92 | 0.90 | 1 | 116 |
-| Panel of judges (Verga '24) | no | 90.62 | 0.92 | 0.88 | 4 | 0 |
-| Single judge (Zheng '23) | no | 84.90 | 0.83 | 0.90 | 1 | 0 |
-| EvoPrompt GA (Guo '24) | no | 84.90 | 0.83 | 0.90 | 1 | 115 |
-| GEPA (Agrawal '25) | no | 84.90 | 0.83 | 0.90 | 1 | 120 |
-| NEATJudge (ours) | yes | 84.90 | 0.83 | 0.90 | 2 | 246 |
+| Method | topo | eval mean | ±std | safety | quality | agents | calls |
+|---|---|---|---|---|---|---|---|
+| Panel of judges (Verga '24) | no | 94.31 | 4.05 | 0.96 | 0.89 | 4.0 | 0 |
+| **NEATJudge (ours)** | yes | **94.12** | 5.51 | 0.95 | **0.92** | 1.6 | 410 |
+| Single judge (Zheng '23) | no | 93.62 | 5.37 | 0.95 | 0.90 | 1.0 | 0 |
+| OPRO (Yang '23) | no | 93.56 | 5.30 | 0.95 | 0.89 | 1.0 | 176 |
+| GEPA (Agrawal '25) | no | 93.44 | 2.99 | 0.95 | 0.89 | 1.0 | 143 |
+| EvoPrompt GA (Guo '24) | no | 93.31 | 5.25 | 0.95 | 0.88 | 1.0 | 150 |
 
-**Honest result:** on this small (12-item) held-out eval, NEATJudge did *not* win —
-OPRO and a fixed multi-agent Panel were strongest, and NEATJudge tied the baseline.
-The eval is tiny (high variance) and NEAT is split-sensitive (it improved 92.81→94.59
-on a different 20-item split). Full analysis, caveats, and how to run a larger, more
-reliable comparison: [`docs/benchmark_results.md`](docs/benchmark_results.md).
+**Honest result:** the top two — a fixed **Panel** and **NEATJudge** — are a
+statistical tie (~94.1–94.3, well within std). Both edge the un-optimized single
+judge; prompt-only optimizers (OPRO/GEPA/EvoPrompt) do *not* reliably beat the
+baseline. NEATJudge reaches the top tier with the **best quality** and **fewer agents
+than the panel (1.6 vs 4)**, but at the **highest compute cost** and with no
+statistically significant win — so this supports NEAT's premise (structure helps)
+rather than "NEAT beats everything." Full analysis + caveats:
+[`docs/benchmark_sweep.md`](docs/benchmark_sweep.md). (A single 12-item split ranked
+NEAT last purely from variance — see [`docs/benchmark_results.md`](docs/benchmark_results.md)
+— which is why we average over seeds.)
 
 ```bash
-python run_benchmark.py            # live on Opus
+python run_sweep.py                # seed-averaged, live on Opus (recommended)
+python run_benchmark.py            # single split, live on Opus
 python run_benchmark.py --mock     # deterministic offline smoke run
 ```
 
