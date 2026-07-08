@@ -74,6 +74,27 @@ best = NEATJudge(cfg, evaluator, critic).run()
 > for real judges. Every node's system prompt carries `OUTPUT_CONTRACT`, which
 > tells real models to emit the parseable per-axis verdict JSON.
 
+## The model-mutating gene
+
+Beyond topology and prompts, NEATJudge can evolve **which model runs each agent**.
+Every `NodeGene` carries a `model` gene (heritable through crossover); `mutate_model`
+reassigns it from `Config.model_pool`, and a `ModelRouter` dispatches each agent to
+the matching client at evaluation time. A cost-aware fitness term
+(`model_cost_weight * Σ MODEL_COST`) rewards the *cheapest* model that still holds
+accuracy — so an Opus→Haiku downgrade that costs no fitness is selected for.
+
+```bash
+python run_live.py                 # every agent on claude-opus-4-8 (gene pinned)
+python run_live.py --evolve-models # gene explores {opus-4-8, sonnet-4-6, haiku-4-5}
+```
+
+```python
+from neatjudge import AnthropicClient, ModelRouter
+router = (ModelRouter(AnthropicClient("claude-haiku-4-5"))
+          .register("claude-opus-4-8", AnthropicClient("claude-opus-4-8")))
+# Agents with model gene "claude-opus-4-8" run on Opus; everything else on Haiku.
+```
+
 ## Package layout
 
 ```
