@@ -141,9 +141,31 @@ did not generalize. Full analysis:
 [`docs/benchmark_huge.md`](docs/benchmark_huge.md) (Opus) and
 [`docs/benchmark_huge_haiku.md`](docs/benchmark_huge_haiku.md) (Haiku + cross-model).
 
-**Recommendation from the full suite:** use a single strong judge, or a small fixed
-panel for weaker judges; an evolutionary/reflective optimization budget did not pay
-off for LLM-as-a-judge safety at this scale.
+### Multi-faceted rubric — where NEATJudge finally tops the field (HelpSteer2, 300 items, Opus)
+
+Three human-labeled axes (correctness/coherence/helpfulness), each ownable by a
+distinct specialist — the setup most favorable to multi-agent judging:
+
+| Method | topo | eval | agents | opt calls |
+|---|---|---|---|---|
+| **NEATJudge (ours)** | yes | **81.92** | 2 | 618 |
+| EvoPrompt GA | no | 81.75 | 1 | 169 |
+| GEPA | no | 81.69 | 1 | 215 |
+| Single judge | no | 80.97 | 1 | 0 |
+| OPRO | no | 80.97 | 1 | 278 |
+| Panel of judges | no | 79.75 | 4 | 0 |
+
+**NEATJudge is nominally #1 here — the one setting where it wins — but honestly:** it's
+a statistical tie with plain prompt evolution (EvoPrompt/GEPA, ~81.7) at 3–4× the cost,
+and the win comes from *evolving the prompt*, not the topology (the pure-structure
+**Panel did worst, below the single judge**). Full analysis:
+[`docs/benchmark_multiaxis.md`](docs/benchmark_multiaxis.md).
+
+**Recommendation from the full suite:** the reliable lever is a **single strong judge
+with a good (optionally reflection-tuned) prompt**. Multi-agent *structure* did not beat
+it on either task (a fixed panel helps only a weak judge on safety; it hurt on
+multi-axis). NEATJudge never loses on multi-faceted tasks and can top the field, but it
+does not justify its cost over simpler prompt optimizers (GEPA/EvoPrompt).
 
 <details><summary>Smaller in-house runs (why single-scale numbers mislead)</summary>
 
