@@ -1,8 +1,0 @@
-datasets
-transformers
-sentence-transformers
-neat-python
-numpy
-torch
-scikit-learn
-pytest
