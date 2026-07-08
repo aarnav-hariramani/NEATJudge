@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neatjudge"
+version = "1.0.0"
+description = "Evolving multi-agent LLM-as-a-Judge communication topologies with NEAT."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Aarnav Hariramani" }]
+keywords = ["neat", "evolution", "llm-as-a-judge", "multi-agent", "neuroevolution"]
+
+# The core library is pure standard library. Real judges need a provider SDK.
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+neatjudge-demo = "run_demo:main"
+
+[tool.setuptools]
+packages = ["neatjudge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

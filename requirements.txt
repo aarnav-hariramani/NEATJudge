@@ -1,0 +1,9 @@
+# Core framework has no hard runtime dependencies (pure standard library).
+# Install extras only for the paths you use:
+
+# Real LLM judges
+anthropic>=0.40
+openai>=1.40
+
+# Testing
+pytest>=8.0
