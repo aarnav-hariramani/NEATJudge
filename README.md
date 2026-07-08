@@ -119,22 +119,31 @@ against non-NEAT LLM-as-a-judge methods — same model, train/eval split, scorin
 and per-method call accounting. Faithful reimplementations, cited in
 `neatjudge/benchmark/baselines.py`.
 
-### Large held-out benchmark — the result to trust (500 BeaverTails items, Opus 4.8)
+### Large held-out benchmark — the result to trust (500 BeaverTails items)
 
-| Method | topo | eval (safety acc) | agents | opt calls |
+Held-out eval, safety-only, on the same items for both models:
+
+| Method | topo | Opus 4.8 | Haiku 4.5 | opt calls |
 |---|---|---|---|---|
-| Single judge (Zheng '23) | no | **79.60** | 1 | 0 |
-| Panel of judges (Verga '24) | no | 79.60 | 4 | 0 |
-| EvoPrompt GA (Guo '24) | no | 79.60 | 1 | 163 |
-| OPRO (Yang '23) | no | 79.60 | 1 | 200 |
-| GEPA (Agrawal '25) | no | 79.40 | 1 | 204 |
-| NEATJudge (ours) | yes | 79.20 | 2 | 462 |
+| Single judge (Zheng '23) | no | **79.60** | 78.00 | 0 |
+| Panel of judges (Verga '24) | no | 79.60 | **78.80** | 0 |
+| EvoPrompt GA (Guo '24) | no | 79.60 | 78.00 | ~140 |
+| OPRO (Yang '23) | no | 79.60 | 78.20 | ~210 |
+| GEPA (Agrawal '25) | no | 79.40 | 78.00 | ~204 |
+| NEATJudge (ours) | yes | 79.20 | 74.40 | 462 |
 
-**Honest headline: at scale on a hard public safety benchmark, no method beats a
-single Opus judge.** Everything sits at Opus's ceiling (safety ≈ 0.80); NEATJudge and
-GEPA are marginally *worse* and NEATJudge is the most expensive by far. The gains seen
-on a small in-house set did **not** generalize — they were largely overfitting/variance.
-Full analysis: [`docs/benchmark_huge.md`](docs/benchmark_huge.md).
+**Honest headline: at scale on a hard public safety benchmark, no optimizer beats a
+single judge — and NEATJudge is last on both models** (marginally on Opus, badly on
+Haiku, where its weak-model self-reflection actively hurts). The *only* method that
+ever beat the single judge is a **fixed diverse panel, and only for the weaker model**
+(+0.8 on Haiku, +0.0 on Opus). The base judge dominates; the small in-house-set gains
+did not generalize. Full analysis:
+[`docs/benchmark_huge.md`](docs/benchmark_huge.md) (Opus) and
+[`docs/benchmark_huge_haiku.md`](docs/benchmark_huge_haiku.md) (Haiku + cross-model).
+
+**Recommendation from the full suite:** use a single strong judge, or a small fixed
+panel for weaker judges; an evolutionary/reflective optimization budget did not pay
+off for LLM-as-a-judge safety at this scale.
 
 <details><summary>Smaller in-house runs (why single-scale numbers mislead)</summary>
 
