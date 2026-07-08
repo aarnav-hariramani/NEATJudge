@@ -14,7 +14,12 @@ Two builders are provided over the *same* items:
 
 from __future__ import annotations
 
-from typing import List
+import json
+import random
+from pathlib import Path
+from typing import List, Optional
+
+_DATA_DIR = Path(__file__).parent / "data"
 
 # (id, prompt, response, safety, quality) -- response is the CLEAN text a real
 # judge reads; safety/quality are the hidden ground-truth labels.
@@ -70,3 +75,78 @@ def build_simulated_dataset() -> List[dict]:
          "truth": {"safety": safety, "quality": quality}}
         for (pid, prompt, response, safety, quality) in _ITEMS
     ]
+
+
+def build_public_safety_dataset(limit: Optional[int] = None,
+                                shuffle_seed: Optional[int] = None) -> List[dict]:
+    """Load the bundled ~40-item safety/quality evaluation set (clean text).
+
+    Items span a BeaverTails-style harm taxonomy (weapons, CBRN, cyber, self-harm,
+    hate/harassment, drugs, privacy, fraud, medical misinfo, extremism, CSAE) plus
+    benign-help and safe-refusal pairs, and several *subtle* cases (jailbreak
+    framings, dangerous-advice-as-helpfulness) where a bare generalist judge tends
+    to slip. Ground-truth labels are hidden from the model; only the final verdict
+    is scored.
+    """
+    items: List[dict] = []
+    with open(_DATA_DIR / "safety_eval.jsonl", "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            items.append({
+                "id": rec["id"],
+                "prompt": rec["prompt"],
+                "response": rec["response"],
+                "category": rec.get("category", ""),
+                "truth": {"safety": rec["safety"], "quality": int(rec["quality"])},
+            })
+    if shuffle_seed is not None:
+        random.Random(shuffle_seed).shuffle(items)
+    return items[:limit] if limit else items
+
+
+def train_eval_split(dataset: List[dict], eval_fraction: float = 0.5,
+                     seed: int = 0) -> tuple[List[dict], List[dict]]:
+    """Stratified-ish split into (train, eval) by shuffling with a fixed seed.
+
+    The train split feeds reflective prompt mutation; the eval split scores fitness
+    -- so prompts are not tuned on the exact items they are graded on.
+    """
+    items = list(dataset)
+    random.Random(seed).shuffle(items)
+    cut = max(1, int(round(len(items) * (1.0 - eval_fraction))))
+    return items[:cut], items[cut:]
+
+
+def try_load_beavertails(limit: int = 200, seed: int = 0) -> Optional[List[dict]]:
+    """Optionally load PKU-Alignment/BeaverTails from HuggingFace if available.
+
+    Returns None if the ``datasets`` package or network is unavailable, so callers
+    can fall back to :func:`build_public_safety_dataset`. Maps each QA pair's
+    ``is_safe`` flag to the safety axis; quality is left neutral (3) since
+    BeaverTails does not label quality.
+    """
+    try:
+        from datasets import load_dataset  # type: ignore
+    except Exception:
+        return None
+    try:
+        ds = load_dataset("PKU-Alignment/BeaverTails", split="30k_test")
+    except Exception:
+        return None
+    rng = random.Random(seed)
+    idx = list(range(len(ds)))
+    rng.shuffle(idx)
+    out: List[dict] = []
+    for i in idx[:limit]:
+        row = ds[i]
+        out.append({
+            "id": f"bt{i}",
+            "prompt": row["prompt"],
+            "response": row["response"],
+            "category": "beavertails",
+            "truth": {"safety": "safe" if row["is_safe"] else "unsafe", "quality": 3},
+        })
+    return out

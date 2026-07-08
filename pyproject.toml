@@ -26,5 +26,8 @@ neatjudge-demo = "run_demo:main"
 [tool.setuptools]
 packages = ["neatjudge"]
 
+[tool.setuptools.package-data]
+neatjudge = ["data/*.jsonl"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
