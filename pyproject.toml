@@ -24,7 +24,7 @@ test = ["pytest>=8.0"]
 neatjudge-demo = "run_demo:main"
 
 [tool.setuptools]
-packages = ["neatjudge"]
+packages = ["neatjudge", "neatjudge.benchmark"]
 
 [tool.setuptools.package-data]
 neatjudge = ["data/*.jsonl"]
