@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 _DATA_DIR = Path(__file__).parent / "data"
 
@@ -212,5 +212,82 @@ def try_load_beavertails(limit: int = 500, seed: int = 0, *, pool: int = 2000,
             "response": r["response"],
             "category": _category(r.get("category")),
             "truth": {"safety": "safe" if r.get("is_safe") else "unsafe", "quality": 3},
+        })
+    return out
+
+
+def _fetch_hf_rows(dataset: str, split: str, pool: int, cache_path: str,
+                   config: str = "default") -> List[dict]:
+    """Generic paginated fetch of HF datasets-server rows (cached to JSONL)."""
+    import json as _json
+    import time
+    import urllib.parse
+    import urllib.request
+
+    cache = Path(cache_path)
+    rows: List[dict] = []
+    if cache.exists():
+        with open(cache, "r", encoding="utf-8") as fh:
+            rows = [_json.loads(ln) for ln in fh if ln.strip()]
+    if len(rows) >= pool:
+        return rows[:pool]
+
+    base = "https://datasets-server.huggingface.co/rows"
+    offset = len(rows)
+    while len(rows) < pool:
+        length = min(100, pool - len(rows))
+        q = urllib.parse.urlencode({"dataset": dataset, "config": config,
+                                    "split": split, "offset": offset, "length": length})
+        req = urllib.request.Request(f"{base}?{q}", headers={"User-Agent": "curl/8"})
+        for attempt in range(4):
+            try:
+                data = _json.loads(urllib.request.urlopen(req, timeout=30).read())
+                break
+            except Exception:
+                if attempt == 3:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        batch = data.get("rows", [])
+        if not batch:
+            break
+        rows.extend(r["row"] for r in batch)
+        offset += len(batch)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(_json.dumps(r) + "\n")
+    return rows[:pool]
+
+
+def try_load_helpsteer(limit: int = 300, seed: int = 0,
+                       axes: Tuple[str, ...] = ("correctness", "coherence", "helpfulness"),
+                       *, split: str = "train", pool: int = 2000,
+                       cache_path: str = "runs/helpsteer2_pool.jsonl") -> Optional[List[dict]]:
+    """Load NVIDIA HelpSteer2 items with per-axis human ratings (0-4).
+
+    Each item's ``truth`` is a dict of the requested numeric ``axes`` (e.g.
+    correctness/coherence/helpfulness). Use with a :class:`~neatjudge.rubric.Rubric`
+    over the same axes. Returns None if the data cannot be fetched.
+    """
+    try:
+        rows = _fetch_hf_rows("nvidia/HelpSteer2", split, pool, cache_path)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    rng = random.Random(seed)
+    rng.shuffle(rows)
+    out: List[dict] = []
+    for i, r in enumerate(rows[:limit]):
+        try:
+            truth = {ax: int(r[ax]) for ax in axes}
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append({
+            "id": f"hs{i}",
+            "prompt": r["prompt"],
+            "response": r["response"],
+            "category": "helpsteer2",
+            "truth": truth,
         })
     return out

@@ -16,7 +16,9 @@ from .datasets import (
     build_simulated_dataset,
     train_eval_split,
     try_load_beavertails,
+    try_load_helpsteer,
 )
+from .rubric import HELPSTEER_RUBRIC, Axis, Rubric
 from .engine import NEATJudge
 from .fitness import FitnessEvaluator
 from .genes import ConnectionGene, NodeGene, NodeType, default_weight_text
@@ -42,6 +44,7 @@ __all__ = [
     "Config",
     "build_golden_dataset", "build_simulated_dataset",
     "build_public_safety_dataset", "train_eval_split", "try_load_beavertails",
+    "try_load_helpsteer", "Axis", "Rubric", "HELPSTEER_RUBRIC",
     "NEATJudge",
     "FitnessEvaluator",
     "ConnectionGene", "NodeGene", "NodeType", "default_weight_text",
