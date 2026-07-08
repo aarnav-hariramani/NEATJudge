@@ -161,11 +161,39 @@ and the win comes from *evolving the prompt*, not the topology (the pure-structu
 **Panel did worst, below the single judge**). Full analysis:
 [`docs/benchmark_multiaxis.md`](docs/benchmark_multiaxis.md).
 
-**Recommendation from the full suite:** the reliable lever is a **single strong judge
-with a good (optionally reflection-tuned) prompt**. Multi-agent *structure* did not beat
-it on either task (a fixed panel helps only a weak judge on safety; it hurt on
-multi-axis). NEATJudge never loses on multi-faceted tasks and can top the field, but it
-does not justify its cost over simpler prompt optimizers (GEPA/EvoPrompt).
+### Heterogeneous (mixed-model) judges — the decisive test
+
+The last hope for multi-agent judging: *different* models (Claude, GPT-4o, Gemini,
+Llama) with decorrelated errors, so a jury could beat any single judge. On HelpSteer2
+multi-axis (held-out):
+
+| config | eval | vs best single |
+|---|---|---|
+| **Llama-4-maverick (single)** | **83.25** | best single (the bar) |
+| jury: best-3 (opus+gpt-4o+llama) | 82.79 | −0.46 |
+| jury: cross-provider-4 | 81.71 | −1.54 |
+| NEATJudge (heterogeneous) | 81.42 | −1.83 |
+| mixed-model panel | 80.79 | −2.46 |
+| Opus 4.8 (single) | 80.67 | −2.58 |
+
+**Thesis NOT confirmed: no jury, panel, or evolved topology beat the best single judge.**
+Averaging a dominant model with weaker ones pulls toward the mean; even a curated jury of
+the three strong models (82.79) stayed under Llama alone, because LLM judges share
+*systematic* biases (correlated errors even across providers). Full analysis:
+[`docs/benchmark_hetero.md`](docs/benchmark_hetero.md).
+
+### Final recommendation (whole suite)
+
+The reliable levers for LLM-as-a-judge, by impact:
+1. **Pick the best base model for the task** — by far the biggest lever (Llama-4-mav beat
+   Opus/GPT-4o by 3+ pts here; the model spread was 15+ pts). *Model selection > model combination.*
+2. A light **reflective prompt** tune — small, task-dependent, can backfire with a weak critic.
+3. **Multi-agent structure / topology search (NEATJudge): not worth its cost.** It never
+   reliably beat the best single judge across safety, multi-axis, weak-model, or
+   heterogeneous settings.
+
+NEATJudge is a clean, fully-tested, honestly-benchmarked artifact that answered its own
+question in the negative — a real result.
 
 <details><summary>Smaller in-house runs (why single-scale numbers mislead)</summary>
 
