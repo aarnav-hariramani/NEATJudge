@@ -74,7 +74,8 @@ class NEATJudge:
         if self.rng.random() < cfg.p_mutate_prompt:
             genome.mutate_prompt(self.rng, self.critic, self.evaluator,
                                  reflective=cfg.reflective_prompt_rewrite,
-                                 batch_size=cfg.reflection_batch)
+                                 batch_size=cfg.reflection_batch,
+                                 rubric=getattr(self.evaluator, "rubric", None))
         if self.rng.random() < cfg.p_mutate_model:
             genome.mutate_model(self.rng, cfg.model_pool)
 

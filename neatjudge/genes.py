@@ -37,15 +37,18 @@ class NodeGene:
     calibration: float = 0.30
     model: Optional[str] = None
 
-    def rendered_system_instruction(self) -> str:
+    def rendered_system_instruction(self, rubric=None) -> str:
         """The system prompt actually sent to the LLM.
 
         Composed of the evolved instruction, the (simulation-only) calibration
         marker, and the output contract that makes real models emit parseable JSON.
+        When a ``rubric`` is given, its multi-axis contract replaces the default
+        safety/quality one.
         """
+        contract = rubric.contract() if rubric is not None else OUTPUT_CONTRACT
         return (
             f"{self.system_instruction} [[calibration:{self.calibration:.2f}]]\n\n"
-            f"{OUTPUT_CONTRACT}"
+            f"{contract}"
         )
 
     def clone(self) -> "NodeGene":

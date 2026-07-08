@@ -30,6 +30,7 @@ class Genome:
         self.adjusted_fitness: float = 0.0
         self.safety_accuracy: float = 0.0    # set by FitnessEvaluator.evaluate
         self.quality_accuracy: float = 0.0
+        self.axis_accuracy: dict = {}        # per-axis closeness for rubric scoring
 
     # ---- construction ---------------------------------------------------------------
 
@@ -234,7 +235,7 @@ class Genome:
     }
 
     def mutate_prompt(self, rng: random.Random, critic: LLMClient, evaluator,
-                      reflective: bool = False, batch_size: int = 6) -> bool:
+                      reflective: bool = False, batch_size: int = 6, rubric=None) -> bool:
         """Reflective mutation of one node's system instruction.
 
         Two modes:
@@ -270,26 +271,39 @@ class Genome:
             )
             return True
 
-        return self._reflective_rewrite(node, rng, critic, evaluator, batch_size)
+        return self._reflective_rewrite(node, rng, critic, evaluator, batch_size, rubric)
 
-    def _run_node_solo(self, node, item: dict, client: LLMClient) -> dict:
+    def _run_node_solo(self, node, item: dict, client: LLMClient, rubric=None) -> dict:
         """Judge one item with a single node in isolation (no upstream context)."""
         item_text = f"PROMPT: {item['prompt']}\nRESPONSE: {item['response']}"
-        raw = client.complete(node.rendered_system_instruction(), item_text)
-        return self._to_verdict(self._safe_parse(raw))
+        raw = client.complete(node.rendered_system_instruction(rubric), item_text)
+        return self._to_verdict(self._safe_parse(raw), rubric)
 
-    def _reflective_rewrite(self, node, rng, critic, evaluator, batch_size: int) -> bool:
-        axes = self.AXIS_OWNER.get(node.personality_core, ("safety", "quality"))
+    def _reflective_rewrite(self, node, rng, critic, evaluator, batch_size: int,
+                            rubric=None) -> bool:
+        if rubric is not None:
+            axes = rubric.owner_of(node.personality_core)
+        else:
+            axes = self.AXIS_OWNER.get(node.personality_core, ("safety", "quality"))
         client = self._resolve_client(evaluator.llm, node)
         batch = evaluator.sample_train(rng, batch_size)
 
+        def is_wrong(axis, got, want):
+            if rubric is not None:
+                try:
+                    return abs(int(got) - int(want)) > rubric.tolerance(axis)
+                except (TypeError, ValueError):
+                    return str(got) != str(want)
+            return str(got) != str(want)
+
         mistakes = []
         for item in batch:
-            verdict = self._run_node_solo(node, item, client)
+            verdict = self._run_node_solo(node, item, client, rubric)
             truth = item["truth"]
             for axis in axes:
-                if str(verdict.get(axis)) != str(truth.get(axis)):
-                    mistakes.append((item, axis, verdict.get(axis), truth.get(axis)))
+                got, want = verdict.get(axis), truth.get(axis)
+                if is_wrong(axis, got, want):
+                    mistakes.append((item, axis, got, want))
         if not mistakes:
             return False   # already correct on this batch -- leave a working prompt
 
@@ -336,7 +350,7 @@ class Genome:
             return llm.client_for(node)
         return llm
 
-    def evaluate_item(self, item: dict, llm) -> dict:
+    def evaluate_item(self, item: dict, llm, rubric=None) -> dict:
         """Run one dataset item through the agent graph and return the OUTPUT verdict.
 
         Nodes fire in topological order. Each non-input node is handed the item plus
@@ -346,6 +360,8 @@ class Genome:
 
         ``llm`` may be a single :class:`~neatjudge.llm.LLMClient` (used for every
         node) or a :class:`~neatjudge.llm.ModelRouter` (routes per node's model gene).
+        A ``rubric`` switches judging to its multi-axis scheme; otherwise the default
+        safety/quality verdict is returned.
         """
         emitted: Dict[int, dict] = {}
         item_text = f"PROMPT: {item['prompt']}\nRESPONSE: {item['response']}"
@@ -366,10 +382,10 @@ class Genome:
 
             user_content = "\n".join(context_lines)
             client = self._resolve_client(llm, node)
-            raw = client.complete(node.rendered_system_instruction(), user_content)
+            raw = client.complete(node.rendered_system_instruction(rubric), user_content)
             emitted[node_id] = self._safe_parse(raw)
 
-        return self._to_verdict(emitted.get(OUTPUT_NODE_ID, {}))
+        return self._to_verdict(emitted.get(OUTPUT_NODE_ID, {}), rubric)
 
     @staticmethod
     def _safe_parse(raw: str) -> dict:
@@ -394,11 +410,13 @@ class Genome:
         return {}
 
     @staticmethod
-    def _to_verdict(node_output: dict) -> dict:
-        """Coerce a node's raw JSON into a normalized {safety, quality} verdict.
+    def _to_verdict(node_output: dict, rubric=None) -> dict:
+        """Coerce a node's raw JSON into a normalized verdict.
 
         Tolerant of a real judge returning axis cells as bare labels/scalars rather
-        than the {"value": ..., "confidence": ...} objects the mock emits.
+        than the {"value": ..., "confidence": ...} objects the mock emits. With a
+        ``rubric``, returns a value per rubric axis (defaulting to the axis midpoint);
+        otherwise the default {safety, quality} verdict.
         """
         per_axis = node_output.get("per_axis", {}) if isinstance(node_output, dict) else {}
         if not isinstance(per_axis, dict):
@@ -409,6 +427,10 @@ class Genome:
             if isinstance(cell, dict):
                 return cell.get("value", default)
             return cell if cell is not None else default
+
+        if rubric is not None:
+            return {ax.name: axis_value(ax.name, rubric.midpoint(ax.name))
+                    for ax in rubric.axes}
 
         return {"safety": axis_value("safety", "safe"),
                 "quality": axis_value("quality", 3)}

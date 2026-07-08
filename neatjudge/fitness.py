@@ -30,8 +30,11 @@ class FitnessEvaluator:
     def __init__(self, dataset: List[dict], llm, *, train_set: List[dict] = None,
                  default_model: str = "", model_cost_weight: float = 0.0,
                  complexity_penalty: float = None, safety_weight: float = 0.5,
-                 workers: int = 1):
+                 workers: int = 1, rubric=None):
         self.dataset = dataset
+        # When set, judging uses the rubric's numeric axes (mean per-axis closeness)
+        # instead of the default safety/quality scheme.
+        self.rubric = rubric
         # Item-level parallelism for one genome's evaluation (LLM calls are IO-bound
         # and genome.evaluate_item mutates no shared state). 1 = sequential.
         self.workers = workers
@@ -78,28 +81,57 @@ class FitnessEvaluator:
         err = abs(pred_quality - int(truth["quality"]))
         return safety_hit, max(0.0, 1.0 - err / 4.0)
 
+    def _axis_closeness(self, genome: Genome, item: dict) -> dict:
+        """Per-axis closeness in [0,1] for one item under the rubric."""
+        verdict = genome.evaluate_item(item, self.llm, self.rubric)
+        truth = item["truth"]
+        out = {}
+        for ax in self.rubric.axes:
+            try:
+                pred = int(verdict.get(ax.name))
+            except (TypeError, ValueError):
+                pred = self.rubric.midpoint(ax.name)
+            err = abs(pred - int(truth[ax.name]))
+            out[ax.name] = max(0.0, 1.0 - err / self.rubric.span(ax.name))
+        return out
+
+    def _penalized(self, genome: Genome, raw: float) -> float:
+        hidden = sum(1 for node in genome.nodes.values()
+                     if node.node_type == NodeType.HIDDEN)
+        cost_penalty = self.model_cost_weight * self._model_cost(genome)
+        return max(0.0, raw - self.complexity_penalty * hidden - cost_penalty)
+
     def evaluate(self, genome: Genome) -> float:
+        if self.rubric is not None:
+            return self._evaluate_rubric(genome)
         if self.workers > 1 and len(self.dataset) > 1:
             with ThreadPoolExecutor(max_workers=self.workers) as pool:
                 pairs = list(pool.map(lambda it: self._item_scores(genome, it),
                                       self.dataset))
         else:
             pairs = [self._item_scores(genome, it) for it in self.dataset]
-        safety_hits = sum(p[0] for p in pairs)
-        quality_score = sum(p[1] for p in pairs)
-
         n = len(self.dataset)
-        safety_acc = safety_hits / n
-        quality_acc = quality_score / n
+        safety_acc = sum(p[0] for p in pairs) / n
+        quality_acc = sum(p[1] for p in pairs) / n
         sw = self.safety_weight
         raw = 100.0 * (sw * safety_acc + (1.0 - sw) * quality_acc)
-
-        hidden = sum(1 for node in genome.nodes.values()
-                     if node.node_type == NodeType.HIDDEN)
-        cost_penalty = self.model_cost_weight * self._model_cost(genome)
-        fitness = max(0.0, raw - self.complexity_penalty * hidden - cost_penalty)
+        fitness = self._penalized(genome, raw)
         genome.fitness = fitness
-        # Expose the axis breakdown for reporting/analysis.
         genome.safety_accuracy = safety_acc
         genome.quality_accuracy = quality_acc
+        return fitness
+
+    def _evaluate_rubric(self, genome: Genome) -> float:
+        if self.workers > 1 and len(self.dataset) > 1:
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                rows = list(pool.map(lambda it: self._axis_closeness(genome, it),
+                                     self.dataset))
+        else:
+            rows = [self._axis_closeness(genome, it) for it in self.dataset]
+        n = len(self.dataset)
+        axis_acc = {ax.name: sum(r[ax.name] for r in rows) / n for ax in self.rubric.axes}
+        raw = 100.0 * (sum(axis_acc.values()) / len(axis_acc))
+        fitness = self._penalized(genome, raw)
+        genome.fitness = fitness
+        genome.axis_accuracy = axis_acc
         return fitness
